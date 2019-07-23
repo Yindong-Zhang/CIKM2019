@@ -27,8 +27,13 @@ class NGCF(object):
 
         self.n_fold = 100
 
-        self.norm_adj = data_config['norm_adj']
-        self.n_nonzero_elems = self.norm_adj.count_nonzero()
+        self.norm_adj = data_config['norm_adj'] # an adj  (clk_adj, cart_adj, collect_adj, buy_adj)
+        self.n_relation = len(self.norm_adj)
+        # self.clk_adj = data_config['clk_adj'] #
+        # self.cart_adj = data_config['cart_adj'] #
+        # self.collect_adj = data_config['collect_adj'] #
+        # self.buy_adj = data_config['buy_adj']
+        self.n_nonzero_elems = [adj.count_nonzero() for adj in self.norm_adj]
 
         self.lr = args.lr
 
@@ -130,16 +135,17 @@ class NGCF(object):
         self.weight_size_list = [self.emb_dim] + self.weight_size
 
         for k in range(self.n_layers):
-            all_weights['W_gc_%d' %k] = tf.Variable(
-                initializer([self.weight_size_list[k], self.weight_size_list[k+1]]), name='W_gc_%d' % k)
-            all_weights['b_gc_%d' %k] = tf.Variable(
-                initializer([1, self.weight_size_list[k+1]]), name='b_gc_%d' % k)
+            all_weights['W_gc_%d' %k] = [tf.Variable(
+                initializer([self.weight_size_list[k], self.weight_size_list[k+1]]), name='W_gc_%d_r%d' %(k, r)) for r in range(self.n_relation)]
+            all_weights['b_gc_%d' %k] = [tf.Variable(
+                initializer([1, self.weight_size_list[k+1]]), name='b_gc_%d_r%d' %(k, r)) for r in range(self.n_relation)]
 
-            all_weights['W_bi_%d' % k] = tf.Variable(
-                initializer([self.weight_size_list[k], self.weight_size_list[k + 1]]), name='W_bi_%d' % k)
-            all_weights['b_bi_%d' % k] = tf.Variable(
-                initializer([1, self.weight_size_list[k + 1]]), name='b_bi_%d' % k)
+            all_weights['W_bi_%d' % k] = [tf.Variable(
+                initializer([self.weight_size_list[k], self.weight_size_list[k + 1]]), name='W_bi_%d_r%d' %(k, r)) for r in range(self.n_relation)]
+            all_weights['b_bi_%d' % k] = [tf.Variable(
+                initializer([1, self.weight_size_list[k + 1]]), name='b_bi_%d_r%d' %(k, r)) for r in range(self.n_relation)]
 
+            # TODO:
             all_weights['W_mlp_%d' % k] = tf.Variable(
                 initializer([self.weight_size_list[k], self.weight_size_list[k+1]]), name='W_mlp_%d' % k)
             all_weights['b_mlp_%d' % k] = tf.Variable(
@@ -151,31 +157,37 @@ class NGCF(object):
         A_fold_hat = []
 
         fold_len = (self.n_users + self.n_items) // self.n_fold
-        for i_fold in range(self.n_fold):
-            start = i_fold * fold_len
-            if i_fold == self.n_fold -1:
-                end = self.n_users + self.n_items
-            else:
-                end = (i_fold + 1) * fold_len
+        tmp_A_fold_hat = []
+        for r in range(self.n_relation):
+            for i_fold in range(self.n_fold):
+                start = i_fold * fold_len
+                if i_fold == self.n_fold -1:
+                    end = self.n_users + self.n_items
+                else:
+                    end = (i_fold + 1) * fold_len
 
-            A_fold_hat.append(self._convert_sp_mat_to_sp_tensor(X[start:end]))
+                tmp_A_fold_hat.append(self._convert_sp_mat_to_sp_tensor(X[start:end]))
+            A_fold_hat.append(tmp_A_fold_hat)
         return A_fold_hat
 
     def _split_A_hat_node_dropout(self, X):
         A_fold_hat = []
 
         fold_len = (self.n_users + self.n_items) // self.n_fold
-        for i_fold in range(self.n_fold):
-            start = i_fold * fold_len
-            if i_fold == self.n_fold -1:
-                end = self.n_users + self.n_items
-            else:
-                end = (i_fold + 1) * fold_len
+        tmp_A_fold_hat = []
+        for r in range(self.n_relation):
+            for i_fold in range(self.n_fold):
+                start = i_fold * fold_len
+                if i_fold == self.n_fold -1:
+                    end = self.n_users + self.n_items
+                else:
+                    end = (i_fold + 1) * fold_len
 
-            # A_fold_hat.append(self._convert_sp_mat_to_sp_tensor(X[start:end]))
-            temp = self._convert_sp_mat_to_sp_tensor(X[start:end])
-            n_nonzero_temp = X[start:end].count_nonzero()
-            A_fold_hat.append(self._dropout_sparse(temp, 1 - self.node_dropout[0], n_nonzero_temp))
+                # A_fold_hat.append(self._convert_sp_mat_to_sp_tensor(X[start:end]))
+                temp = self._convert_sp_mat_to_sp_tensor(X[start:end])
+                n_nonzero_temp = X[start:end].count_nonzero()
+                tmp_A_fold_hat.append(self._dropout_sparse(temp, 1 - self.node_dropout[0], n_nonzero_temp))
+            A_fold_hat.append(tmp_A_fold_hat)
 
         return A_fold_hat
 
@@ -183,6 +195,7 @@ class NGCF(object):
         # Generate a set of adjacency sub-matrix.
         if self.node_dropout_flag:
             # node dropout.
+            # return a [[split slices of sparse tensor, ], ]
             A_fold_hat = self._split_A_hat_node_dropout(self.norm_adj)
         else:
             A_fold_hat = self._split_A_hat(self.norm_adj)
@@ -193,21 +206,24 @@ class NGCF(object):
 
         for k in range(0, self.n_layers):
 
-            temp_embed = []
-            for f in range(self.n_fold):
-                temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], ego_embeddings))
+            side_embeddings = []
+            for r in range(self.n_relation):
+                temp_embed = []
+                for f in range(self.n_fold):
+                    temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[r][f], ego_embeddings))
+                # sum messages of neighbors.
+                side_embeddings.append(tf.concat(temp_embed, 0))
 
-            # sum messages of neighbors.
-            side_embeddings = tf.concat(temp_embed, 0)
             # transformed sum messages of neighbors.
-            sum_embeddings = tf.nn.leaky_relu(
-                tf.matmul(side_embeddings, self.weights['W_gc_%d' % k]) + self.weights['b_gc_%d' % k])
+            transformed_side_embedding = [tf.matmul(side_embeddings[r], self.weights['W_gc_%d_r%d' %(k, r)]) + self.weights['b_gc_%d_r%d' %(k, r)]
+                                          for r in range(self.n_relation)]
+            sum_embeddings = tf.nn.leaky_relu(tf.add_n(transformed_side_embedding))
 
             # bi messages of neighbors.
-            bi_embeddings = tf.multiply(ego_embeddings, side_embeddings)
+            bi_embeddings = [tf.multiply(ego_embeddings, side_embeddings[r]) for r in range(self.n_relation)]
             # transformed bi messages of neighbors.
-            bi_embeddings = tf.nn.leaky_relu(
-                tf.matmul(bi_embeddings, self.weights['W_bi_%d' % k]) + self.weights['b_bi_%d' % k])
+            transformed_bi_embedding = [tf.matmul(bi_embeddings[r], self.weights['W_bi_%d_r%d' %(k, r)]) + self.weights['b_bi_%d_r%d' %(k, r)] for r in range(self.n_relation)]
+            bi_embeddings = tf.nn.leaky_relu(tf.add_n(transformed_bi_embedding))
 
             # non-linear activation.
             ego_embeddings = sum_embeddings + bi_embeddings
