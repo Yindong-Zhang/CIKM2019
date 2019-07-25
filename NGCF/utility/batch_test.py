@@ -7,16 +7,24 @@ Wang Xiang et al. Neural Graph Collaborative Filtering. In SIGIR 2019.
 '''
 import utility.metrics as metrics
 from utility.parser import parse_args
-from utility.load_data import *
+from utility.data_utils import *
 import multiprocessing
 import heapq
 
 cores = multiprocessing.cpu_count() // 2
 
 args = parse_args()
-Ks = eval(args.Ks)
+Ks = args.Ks
 
-data_generator = Data(path=args.data_path + args.dataset, batch_size=args.batch_size)
+data_generator = Data(path=os.path.join(args.data_path, args.dataset),
+                      batch_size=args.batch_size,
+                      test_ratio= 0.2,
+                      val_ratio= 0.1,
+                      w_by=10,
+                      w_ct= 3,
+                      w_clt= 3,
+                      w_clk= 1,
+                      )
 USR_NUM, ITEM_NUM = data_generator.n_users, data_generator.n_items
 N_TRAIN, N_TEST = data_generator.n_train, data_generator.n_test
 BATCH_SIZE = args.batch_size
@@ -163,8 +171,8 @@ def test(sess, model, users_to_test, drop_flag=False, batch_test_flag=False):
             else:
                 rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
                                                               model.pos_items: item_batch,
-                                                              model.node_dropout: [0.] * len(eval(args.layer_size)),
-                                                              model.mess_dropout: [0.] * len(eval(args.layer_size))})
+                                                              model.node_dropout: [0.] * len(args.layer_size),
+                                                              model.mess_dropout: [0.] * len(args.layer_size)})
 
         user_batch_rating_uid = zip(rate_batch, user_batch)
         batch_result = pool.map(test_one_user, user_batch_rating_uid)

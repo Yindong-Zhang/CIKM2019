@@ -9,6 +9,7 @@ import tensorflow as tf
 import os
 import sys
 os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
+# tf.enable_eager_execution()
 
 from utility.helper import *
 from utility.batch_test import *
@@ -27,25 +28,21 @@ class NGCF(object):
 
         self.n_fold = 100
 
-        self.norm_adj = data_config['norm_adj'] # an adj  (clk_adj, cart_adj, collect_adj, buy_adj)
+        self.norm_adj = [self._convert_sp_mat_to_sp_tensor(adj) for adj in data_config['norm_adj']] # an adj  (clk_adj, cart_adj, collect_adj, buy_adj)
         self.n_relation = len(self.norm_adj)
-        # self.clk_adj = data_config['clk_adj'] #
-        # self.cart_adj = data_config['cart_adj'] #
-        # self.collect_adj = data_config['collect_adj'] #
-        # self.buy_adj = data_config['buy_adj']
-        self.n_nonzero_elems = [adj.count_nonzero() for adj in self.norm_adj]
+        # self.n_nonzero_elems = [adj.count_nonzero() for adj in self.norm_adj]
 
         self.lr = args.lr
 
         self.emb_dim = args.embed_size
         self.batch_size = args.batch_size
 
-        self.weight_size = eval(args.layer_size)
+        self.weight_size = args.layer_size
         self.n_layers = len(self.weight_size)
 
         self.model_type += '_%s_%s_l%d' % (self.adj_type, self.alg_type, self.n_layers)
 
-        self.regs = eval(args.regs)
+        self.regs = args.regs
         self.decay = self.regs[0]
 
         self.verbose = args.verbose
@@ -196,9 +193,9 @@ class NGCF(object):
         if self.node_dropout_flag:
             # node dropout.
             # return a [[split slices of sparse tensor, ], ]
-            A_fold_hat = self._split_A_hat_node_dropout(self.norm_adj)
+            A_fold_hat = [self._dropout_sparse(adj) for adj in self.norm_adj]
         else:
-            A_fold_hat = self._split_A_hat(self.norm_adj)
+            A_fold_hat = self.norm_adj
 
         ego_embeddings = tf.concat([self.weights['user_embedding'], self.weights['item_embedding']], axis=0)
 
@@ -208,21 +205,18 @@ class NGCF(object):
 
             side_embeddings = []
             for r in range(self.n_relation):
-                temp_embed = []
-                for f in range(self.n_fold):
-                    temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[r][f], ego_embeddings))
                 # sum messages of neighbors.
-                side_embeddings.append(tf.concat(temp_embed, 0))
+                side_embeddings.append(tf.sparse_tensor_dense_matmul(A_fold_hat[r], ego_embeddings))
 
             # transformed sum messages of neighbors.
-            transformed_side_embedding = [tf.matmul(side_embeddings[r], self.weights['W_gc_%d_r%d' %(k, r)]) + self.weights['b_gc_%d_r%d' %(k, r)]
+            transformed_side_embedding = [tf.matmul(side_embeddings[r], self.weights['W_gc_%d' %(k, )][r]) + self.weights['b_gc_%d' %(k, )][r]
                                           for r in range(self.n_relation)]
             sum_embeddings = tf.nn.leaky_relu(tf.add_n(transformed_side_embedding))
 
             # bi messages of neighbors.
             bi_embeddings = [tf.multiply(ego_embeddings, side_embeddings[r]) for r in range(self.n_relation)]
             # transformed bi messages of neighbors.
-            transformed_bi_embedding = [tf.matmul(bi_embeddings[r], self.weights['W_bi_%d_r%d' %(k, r)]) + self.weights['b_bi_%d_r%d' %(k, r)] for r in range(self.n_relation)]
+            transformed_bi_embedding = [tf.matmul(bi_embeddings[r], self.weights['W_bi_%d' %(k, )][r]) + self.weights['b_bi_%d' %(k, )][r] for r in range(self.n_relation)]
             bi_embeddings = tf.nn.leaky_relu(tf.add_n(transformed_bi_embedding))
 
             # non-linear activation.
@@ -232,7 +226,7 @@ class NGCF(object):
             ego_embeddings = tf.nn.dropout(ego_embeddings, 1 - self.mess_dropout[k])
 
             # normalize the distribution of embeddings.
-            norm_embeddings = tf.math.l2_normalize(ego_embeddings, axis=1)
+            norm_embeddings = tf.nn.l2_normalize(ego_embeddings, axis=1)
 
             all_embeddings += [norm_embeddings]
 
@@ -329,7 +323,7 @@ def load_pretrained_data():
         pretrain_data = None
     return pretrain_data
 
-if __name__ == '__main__':
+def main():
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
 
     config = dict()
@@ -374,9 +368,9 @@ if __name__ == '__main__':
     saver = tf.train.Saver()
 
     if args.save_flag == 1:
-        layer = '-'.join([str(l) for l in eval(args.layer_size)])
+        layer = '-'.join([str(l) for l in args.layer_size])
         weights_save_path = '%sweights/%s/%s/%s/l%s_r%s' % (args.weights_path, args.dataset, model.model_type, layer,
-                                                            str(args.lr), '-'.join([str(r) for r in eval(args.regs)]))
+                                                            str(args.lr), '-'.join([str(r) for r in args.regs]))
         ensureDir(weights_save_path)
         save_saver = tf.train.Saver(max_to_keep=1)
 
@@ -389,10 +383,10 @@ if __name__ == '__main__':
     Reload the pretrained model parameters.
     """
     if args.pretrain == 1:
-        layer = '-'.join([str(l) for l in eval(args.layer_size)])
+        layer = '-'.join([str(l) for l in args.layer_size])
 
         pretrain_path = '%sweights/%s/%s/%s/l%s_r%s' % (args.weights_path, args.dataset, model.model_type, layer,
-                                                        str(args.lr), '-'.join([str(r) for r in eval(args.regs)]))
+                                                        str(args.lr), '-'.join([str(r) for r in args.regs]))
 
 
         ckpt = tf.train.get_checkpoint_state(os.path.dirname(pretrain_path + '/checkpoint'))
@@ -473,8 +467,8 @@ if __name__ == '__main__':
             users, pos_items, neg_items = data_generator.sample()
             _, batch_loss, batch_mf_loss, batch_emb_loss, batch_reg_loss = sess.run([model.opt, model.loss, model.mf_loss, model.emb_loss, model.reg_loss],
                                feed_dict={model.users: users, model.pos_items: pos_items,
-                                          model.node_dropout: eval(args.node_dropout),
-                                          model.mess_dropout: eval(args.mess_dropout),
+                                          model.node_dropout: args.node_dropout,
+                                          model.mess_dropout: args.mess_dropout,
                                           model.neg_items: neg_items})
             loss += batch_loss
             mf_loss += batch_mf_loss
@@ -551,3 +545,6 @@ if __name__ == '__main__':
         % (args.embed_size, args.lr, args.layer_size, args.node_dropout, args.mess_dropout, args.regs,
            args.adj_type, final_perf))
     f.close()
+
+if __name__ == '__main__':
+    main()

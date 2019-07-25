@@ -11,12 +11,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run NGCF.")
     parser.add_argument('--weights_path', nargs='?', default='',
                         help='Store model path.')
-    parser.add_argument('--data_path', nargs='?', default='../Data/',
+    parser.add_argument('--data_path', default='../Data/',
                         help='Input data path.')
     parser.add_argument('--proj_path', nargs='?', default='',
                         help='Project path.')
 
-    parser.add_argument('--dataset', nargs='?', default='gowalla',
+    parser.add_argument('--dataset', default='CIKM-toy',
                         help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
     parser.add_argument('--pretrain', type=int, default=0,
                         help='0: No pretrain, -1: Pretrain with the learned embeddings, 1:Pretrain with stored models.')
@@ -27,19 +27,19 @@ def parse_args():
 
     parser.add_argument('--embed_size', type=int, default=64,
                         help='Embedding size.')
-    parser.add_argument('--layer_size', nargs='?', default='[64]',
+    parser.add_argument('--layer_size', nargs='+', default=[64, ],
                         help='Output sizes of every layer')
     parser.add_argument('--batch_size', type=int, default=1024,
                         help='Batch size.')
 
-    parser.add_argument('--regs', nargs='?', default='[1e-5,1e-5,1e-2]',
+    parser.add_argument('--regs', type= float,  nargs='?', default= [1e-5,1e-5,1e-2],
                         help='Regularizations.')
     parser.add_argument('--lr', type=float, default=0.01,
                         help='Learning rate.')
 
-    parser.add_argument('--model_type', nargs='?', default='ngcf',
+    parser.add_argument('--model_type', type= str, default='ngcf',
                         help='Specify the name of model (ngcf).')
-    parser.add_argument('--adj_type', nargs='?', default='norm',
+    parser.add_argument('--adj_type', type= str, default='norm',
                         help='Specify the type of the adjacency (laplacian) matrix from {plain, norm, mean}.')
     parser.add_argument('--alg_type', nargs='?', default='ngcf',
                         help='Specify the type of the graph convolutional layer from {ngcf, gcn, gcmc}.')
@@ -49,13 +49,13 @@ def parse_args():
 
     parser.add_argument('--node_dropout_flag', type=int, default=0,
                         help='0: Disable node dropout, 1: Activate node dropout')
-    parser.add_argument('--node_dropout', nargs='?', default='[0.1]',
+    parser.add_argument('--node_dropout', type= float, default=[0.1, ],
                         help='Keep probability w.r.t. node dropout (i.e., 1-dropout_ratio) for each deep layer. 1: no dropout.')
-    parser.add_argument('--mess_dropout', nargs='?', default='[0.1]',
+    parser.add_argument('--mess_dropout', type= float, default=[0.1],
                         help='Keep probability w.r.t. message dropout (i.e., 1-dropout_ratio) for each deep layer. 1: no dropout.')
 
-    parser.add_argument('--Ks', nargs='?', default='[20, 40, 60, 80, 100]',
-                        help='Output sizes of every layer')
+    parser.add_argument('--Ks', nargs='+', default= [20, 40, 60, 80, 100],
+                        help='kth first in rank performance evaluation.')
 
     parser.add_argument('--save_flag', type=int, default=0,
                         help='0: Disable model saver, 1: Activate model saver')
