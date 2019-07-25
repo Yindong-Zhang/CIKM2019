@@ -22,7 +22,7 @@ def parse_args():
                         help='0: No pretrain, -1: Pretrain with the learned embeddings, 1:Pretrain with stored models.')
     parser.add_argument('--verbose', type=int, default=1,
                         help='Interval of evaluation.')
-    parser.add_argument('--epoch', type=int, default=500,
+    parser.add_argument('--epoch', type=int, default= 2,
                         help='Number of epoch.')
 
     parser.add_argument('--embed_size', type=int, default=64,
@@ -57,11 +57,9 @@ def parse_args():
     parser.add_argument('--Ks', nargs='+', default= [20, 40, 60, 80, 100],
                         help='kth first in rank performance evaluation.')
 
+    parser.add_argument('--print_every', type= int, default= 10, help= "print every several batches. ")
     parser.add_argument('--save_flag', type=int, default=0,
                         help='0: Disable model saver, 1: Activate model saver')
-
-    parser.add_argument('--test_flag', nargs='?', default='part',
-                        help='Specify the test type from {part, full}, indicating whether the reference is done in mini-batch')
 
     parser.add_argument('--report', type=int, default=0,
                         help='0: Disable performance report w.r.t. sparsity levels, 1: Show performance report w.r.t. sparsity levels')

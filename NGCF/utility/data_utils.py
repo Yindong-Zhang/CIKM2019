@@ -54,14 +54,12 @@ class Data(object):
         self.test_adj['sum'] = self.weight_buy *  self.test_adj['by'] + self.weight_cart * self.test_adj['ct'] + \
                                 self.weight_collect * self.test_adj['clt'] + self.weight_click *  self.test_adj['clk']
 
-        self.train_relation= self.train_adj['sum'].tolil()
-        self.test_relation = self.test_adj['sum'].tolil()
-
         self.n_users, self.n_items = self.adj['by'].shape[0], self.adj['by'].shape[1]
         self.n_train = self.train_adj['sum'].getnnz()
         self.n_test = self.test_adj['sum'].getnnz()
         self.print_statistics()
-
+        test_user_int_count = np.squeeze(np.array(self.test_adj['sum'].sum(1)))
+        self.test_users= np.arange(self.n_users)[test_user_int_count > 0]
         rd.seed(seed)
         self.rd = np.random.RandomState(seed)
 

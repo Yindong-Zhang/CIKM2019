@@ -13,22 +13,6 @@ import heapq
 
 cores = multiprocessing.cpu_count() // 2
 
-args = parse_args()
-Ks = args.Ks
-
-data_generator = Data(path=os.path.join(args.data_path, args.dataset),
-                      batch_size=args.batch_size,
-                      test_ratio= 0.2,
-                      val_ratio= 0.1,
-                      w_by=10,
-                      w_ct= 3,
-                      w_clt= 3,
-                      w_clk= 1,
-                      )
-USR_NUM, ITEM_NUM = data_generator.n_users, data_generator.n_items
-N_TRAIN, N_TEST = data_generator.n_train, data_generator.n_test
-BATCH_SIZE = args.batch_size
-
 def ranklist_by_heapq(user_pos_test, test_items, rating, Ks):
     item_score = {}
     for i in test_items:
@@ -61,75 +45,66 @@ def get_auc(item_score, user_pos_test):
     auc = metrics.auc(ground_truth=r, prediction=posterior)
     return auc
 
-def ranklist_by_sorted(user_pos_test, test_items, rating, Ks):
-    item_score = {}
-    for i in test_items:
-        item_score[i] = rating[i]
+def ranklist_by_sorted(rating, test_items, test_relevancy_vec, Ks):
+    """
+
+    :param rating: rating of all items
+    :param test_items: items to test, unseen in training set
+    :param test_relevancy_vec: a sparse matrix of relevancy of test_items in shape (1, num items)
+    :param Ks: a list of [k, ]
+    :return:
+    """
+    item_score = { item : rating[item] for item in test_items}
 
     K_max = max(Ks)
-    K_max_item_score = heapq.nlargest(K_max, item_score, key=item_score.get)
+    K_max_item_inds = heapq.nlargest(K_max, item_score, key=item_score.get)
 
-    r = []
-    for i in K_max_item_score:
-        if i in user_pos_test:
-            r.append(1)
-        else:
-            r.append(0)
-    auc = get_auc(item_score, user_pos_test)
-    return r, auc
+    r = [test_relevancy_vec[0, i] for i in K_max_item_inds]
+    return r
 
-def get_performance(user_pos_test, r, auc, Ks):
+def get_performance(r, Ks, num_pos):
     precision, recall, ndcg, hit_ratio = [], [], [], []
 
     for K in Ks:
         precision.append(metrics.precision_at_k(r, K))
-        recall.append(metrics.recall_at_k(r, K, len(user_pos_test)))
+        recall.append(metrics.recall_at_k(r, K, num_pos))
         ndcg.append(metrics.ndcg_at_k(r, K))
         hit_ratio.append(metrics.hit_at_k(r, K))
 
     return {'recall': np.array(recall), 'precision': np.array(precision),
-            'ndcg': np.array(ndcg), 'hit_ratio': np.array(hit_ratio), 'auc': auc}
+            'ndcg': np.array(ndcg), 'hit_ratio': np.array(hit_ratio)}
 
 
-def test_one_user(x):
-    # user u's ratings for user u
-    rating = x[0]
-    #uid
-    u = x[1]
-    #user u's items in the training set
-    try:
-        training_items = data_generator.train_items[u]
-    except Exception:
-        training_items = []
-    #user u's items in the test set
-    user_pos_test = data_generator.test_set[u]
-
-    all_items = set(range(ITEM_NUM))
-
-    test_items = list(all_items - set(training_items))
-
-    if args.test_flag == 'part':
-        r, auc = ranklist_by_heapq(user_pos_test, test_items, rating, Ks)
-    else:
-        r, auc = ranklist_by_sorted(user_pos_test, test_items, rating, Ks)
-
-    return get_performance(user_pos_test, r, auc, Ks)
-
-
-def test(sess, model, users_to_test, drop_flag=False, batch_test_flag=False):
+def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, batch_test_flag=False):
     result = {'precision': np.zeros(len(Ks)), 'recall': np.zeros(len(Ks)), 'ndcg': np.zeros(len(Ks)),
-              'hit_ratio': np.zeros(len(Ks)), 'auc': 0.}
+              'hit_ratio': np.zeros(len(Ks))}
 
     pool = multiprocessing.Pool(cores)
 
-    u_batch_size = BATCH_SIZE * 2
-    i_batch_size = BATCH_SIZE
+    item_num = dataset.n_items
 
-    test_users = users_to_test
+    u_batch_size = batchsize * 2
+    i_batch_size = batchsize
+
     n_test_users = len(test_users)
     n_user_batchs = n_test_users // u_batch_size + 1
 
     count = 0
+
+    def test_one_user(x):
+        # user u's ratings for user u
+        rating, u = x
+        # user u's items in the training set
+        training_items = dataset.train_adj[u].nonzero()[1]
+        # user u's items in the test set
+        all_items = set(range(item_num))
+        test_items = list(all_items - set(training_items))
+
+        user_relevancy_vec = dataset.test_set[u]
+
+        r = ranklist_by_heapq(rating, test_items, user_relevancy_vec, Ks)
+
+        return get_performance(r, Ks, user_relevancy_vec.getnnz())
 
     for u_batch_id in range(n_user_batchs):
         start = u_batch_id * u_batch_size
@@ -139,13 +114,13 @@ def test(sess, model, users_to_test, drop_flag=False, batch_test_flag=False):
 
         if batch_test_flag:
 
-            n_item_batchs = ITEM_NUM // i_batch_size + 1
-            rate_batch = np.zeros(shape=(len(user_batch), ITEM_NUM))
+            n_item_batchs = item_num // i_batch_size + 1
+            rate_batch = np.zeros(shape=(len(user_batch), item_num))
 
             i_count = 0
             for i_batch_id in range(n_item_batchs):
                 i_start = i_batch_id * i_batch_size
-                i_end = min((i_batch_id + 1) * i_batch_size, ITEM_NUM)
+                i_end = min((i_batch_id + 1) * i_batch_size, item_num)
 
                 item_batch = range(i_start, i_end)
 
@@ -155,15 +130,15 @@ def test(sess, model, users_to_test, drop_flag=False, batch_test_flag=False):
                 else:
                     i_rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
                                                                 model.pos_items: item_batch,
-                                                                model.node_dropout: [0.]*len(eval(args.layer_size)),
-                                                                model.mess_dropout: [0.]*len(eval(args.layer_size))})
+                                                                model.node_dropout: 0.,
+                                                                model.mess_dropout: 0.})
                 rate_batch[:, i_start: i_end] = i_rate_batch
                 i_count += i_rate_batch.shape[1]
 
-            assert i_count == ITEM_NUM
+            assert i_count == item_num
 
         else:
-            item_batch = range(ITEM_NUM)
+            item_batch = range(item_num)
 
             if drop_flag == False:
                 rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
@@ -183,7 +158,6 @@ def test(sess, model, users_to_test, drop_flag=False, batch_test_flag=False):
             result['recall'] += re['recall']/n_test_users
             result['ndcg'] += re['ndcg']/n_test_users
             result['hit_ratio'] += re['hit_ratio']/n_test_users
-            result['auc'] += re['auc']/n_test_users
 
 
     assert count == n_test_users

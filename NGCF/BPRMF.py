@@ -102,8 +102,8 @@ if __name__ == '__main__':
     # os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
 
     config = dict()
-    config['n_users'] = data_generator.n_users
-    config['n_items'] = data_generator.n_items
+    config['n_users'] = dataset.n_users
+    config['n_items'] = dataset.n_items
 
     t0 = time()
 
@@ -136,8 +136,8 @@ if __name__ == '__main__':
 
             # *********************************************************
             # get the performance from pretrained model.
-            users_to_test = list(data_generator.test_set.keys())
-            ret = test(sess, model, users_to_test, drop_flag=False)
+            users_to_test = list(dataset.test_set.keys())
+            ret = evaluate(sess, model, users_to_test, drop_flag=False)
             cur_best_pre_0 = ret[5]
 
             pretrain_ret = 'pretrained model recall=[%.5f, %.5f],' \
@@ -159,12 +159,12 @@ if __name__ == '__main__':
     for epoch in range(args.epoch):
         t1 = time()
         loss, mf_loss, reg_loss = 0., 0., 0.
-        n_batch = data_generator.n_train // args.batch_size + 1
+        n_batch = dataset.n_train // args.batch_size + 1
 
 
         for idx in range(n_batch):
             # btime= time()
-            users, pos_items, neg_items = data_generator.sample()
+            users, pos_items, neg_items = dataset.sample()
             _, batch_loss, batch_mf_loss, batch_reg_loss = sess.run([model.opt, model.loss, model.mf_loss, model.reg_loss],
                                feed_dict={model.users: users, model.pos_items: pos_items,
                                           model.neg_items: neg_items})
@@ -185,8 +185,8 @@ if __name__ == '__main__':
             continue
 
         t2 = time()
-        users_to_test = list(data_generator.test_set.keys())
-        ret = test(sess, model, users_to_test, drop_flag=False)
+        users_to_test = list(dataset.test_set.keys())
+        ret = evaluate(sess, model, users_to_test, drop_flag=False)
 
         t3 = time()
 
