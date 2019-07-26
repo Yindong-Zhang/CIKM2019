@@ -12,7 +12,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
 # tf.enable_eager_execution()
 
 from utility.helper import *
-from utility.batch_test import *
+from utility.evaluate import *
 
 class NGCF(object):
     def __init__(self, data_config, args, pretrain_data):
@@ -28,8 +28,8 @@ class NGCF(object):
 
         self.n_fold = 100
 
-        self.norm_adj = [self._convert_sp_mat_to_sp_tensor(adj) for adj in data_config['norm_adj']] # an adj  (clk_adj, cart_adj, collect_adj, buy_adj)
-        self.n_relation = len(self.norm_adj)
+        self.adj_list = data_config['norm_adj'] # an adj  (clk_adj, cart_adj, collect_adj, buy_adj)
+        self.n_relation = len(self.adj_list)
         # self.n_nonzero_elems = [adj.count_nonzero() for adj in self.norm_adj]
 
         self.lr = args.lr
@@ -42,8 +42,7 @@ class NGCF(object):
 
         self.model_type += '_%s_%s_l%d' % (self.adj_type, self.alg_type, self.n_layers)
 
-        self.regs = args.regs
-        self.decay = self.regs[0]
+        self.decay = args.regs
 
         self.verbose = args.verbose
 
@@ -61,8 +60,8 @@ class NGCF(object):
         #          ... please use the 'node_dropout_flag' to indicate whether use such technique.
         #          message dropout (adopted on the convolution operations).
         self.node_dropout_flag = args.node_dropout_flag
-        self.node_dropout = tf.placeholder(tf.float32, shape=[None])
-        self.mess_dropout = tf.placeholder(tf.float32, shape=[None])
+        self.node_dropout = tf.placeholder(tf.float32, shape= ())
+        self.mess_dropout = tf.placeholder(tf.float32, shape= ())
 
         """
         *********************************************************
@@ -154,37 +153,31 @@ class NGCF(object):
         A_fold_hat = []
 
         fold_len = (self.n_users + self.n_items) // self.n_fold
-        tmp_A_fold_hat = []
-        for r in range(self.n_relation):
-            for i_fold in range(self.n_fold):
-                start = i_fold * fold_len
-                if i_fold == self.n_fold -1:
-                    end = self.n_users + self.n_items
-                else:
-                    end = (i_fold + 1) * fold_len
+        for i_fold in range(self.n_fold):
+            start = i_fold * fold_len
+            if i_fold == self.n_fold -1:
+                end = self.n_users + self.n_items
+            else:
+                end = (i_fold + 1) * fold_len
 
-                tmp_A_fold_hat.append(self._convert_sp_mat_to_sp_tensor(X[start:end]))
-            A_fold_hat.append(tmp_A_fold_hat)
+            A_fold_hat.append(self._convert_sp_mat_to_sp_tensor(X[start:end]))
         return A_fold_hat
 
     def _split_A_hat_node_dropout(self, X):
         A_fold_hat = []
 
         fold_len = (self.n_users + self.n_items) // self.n_fold
-        tmp_A_fold_hat = []
-        for r in range(self.n_relation):
-            for i_fold in range(self.n_fold):
-                start = i_fold * fold_len
-                if i_fold == self.n_fold -1:
-                    end = self.n_users + self.n_items
-                else:
-                    end = (i_fold + 1) * fold_len
+        for i_fold in range(self.n_fold):
+            start = i_fold * fold_len
+            if i_fold == self.n_fold -1:
+                end = self.n_users + self.n_items
+            else:
+                end = (i_fold + 1) * fold_len
 
-                # A_fold_hat.append(self._convert_sp_mat_to_sp_tensor(X[start:end]))
-                temp = self._convert_sp_mat_to_sp_tensor(X[start:end])
-                n_nonzero_temp = X[start:end].count_nonzero()
-                tmp_A_fold_hat.append(self._dropout_sparse(temp, 1 - self.node_dropout, n_nonzero_temp))
-            A_fold_hat.append(tmp_A_fold_hat)
+            # A_fold_hat.append(self._convert_sp_mat_to_sp_tensor(X[start:end]))
+            temp = self._convert_sp_mat_to_sp_tensor(X[start:end])
+            n_nonzero_temp = X[start:end].count_nonzero()
+            A_fold_hat.append(self._dropout_sparse(temp, 1 - self.node_dropout[0], n_nonzero_temp))
 
         return A_fold_hat
 
@@ -193,9 +186,10 @@ class NGCF(object):
         if self.node_dropout_flag:
             # node dropout.
             # return a [[split slices of sparse tensor, ], ]
-            A_fold_hat = [self._dropout_sparse(adj, 1 - self.node_dropout, adj.count_nonzero()) for adj in self.norm_adj]
+            A_fold_hat = [self._split_A_hat_node_dropout(adj) for adj in self.adj_list]
         else:
-            A_fold_hat = self.norm_adj
+            A_fold_hat = [self._split_A_hat(adj) for adj in self.adj_list]
+
 
         ego_embeddings = tf.concat([self.weights['user_embedding'], self.weights['item_embedding']], axis=0)
 
@@ -206,7 +200,13 @@ class NGCF(object):
             side_embeddings = []
             for r in range(self.n_relation):
                 # sum messages of neighbors.
-                side_embeddings.append(tf.sparse_tensor_dense_matmul(A_fold_hat[r], ego_embeddings))
+                # side_embeddings.append(tf.sparse_tensor_dense_matmul(A_fold_hat[r], ego_embeddings))
+                temp_embed = []
+                for f in range(self.n_fold):
+                    temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[r][f], ego_embeddings))
+
+                embeddings = tf.concat(temp_embed, 0)
+                side_embeddings.append(embeddings)
 
             # transformed sum messages of neighbors.
             transformed_side_embedding = [tf.matmul(side_embeddings[r], self.weights['W_gc_%d' %(k, )][r]) + self.weights['b_gc_%d' %(k, )][r]
@@ -223,7 +223,7 @@ class NGCF(object):
             ego_embeddings = sum_embeddings + bi_embeddings
 
             # message dropout.
-            ego_embeddings = tf.nn.dropout(ego_embeddings, 1 - self.mess_dropout[k])
+            ego_embeddings = tf.nn.dropout(ego_embeddings, 1 - self.mess_dropout)
 
             # normalize the distribution of embeddings.
             norm_embeddings = tf.nn.l2_normalize(ego_embeddings, axis=1)
@@ -235,7 +235,7 @@ class NGCF(object):
         return u_g_embeddings, i_g_embeddings
 
     def _create_gcn_embed(self):
-        A_fold_hat = self._split_A_hat(self.norm_adj)
+        A_fold_hat = self._split_A_hat(self.adj_list)
         embeddings = tf.concat([self.weights['user_embedding'], self.weights['item_embedding']], axis=0)
 
 
@@ -257,7 +257,14 @@ class NGCF(object):
         return u_g_embeddings, i_g_embeddings
 
     def _create_gcmc_embed(self):
-        A_fold_hat = self._split_A_hat(self.norm_adj)
+        # Generate a set of adjacency sub-matrix.
+        # Generate a set of adjacency sub-matrix.
+        if self.node_dropout_flag:
+            # node dropout.
+            # return a [[split slices of sparse tensor, ], ]
+            A_fold_hat = self._split_A_hat_node_dropout(self.adj_list)
+        else:
+            A_fold_hat = self._split_A_hat(self.adj_list)
 
         embeddings = tf.concat([self.weights['user_embedding'], self.weights['item_embedding']], axis=0)
 

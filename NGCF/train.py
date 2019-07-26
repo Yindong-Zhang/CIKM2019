@@ -4,7 +4,8 @@ from utility.data_utils import *
 from utility.helper import *
 from NGCF import NGCF
 import tensorflow as tf
-from utility.batch_test import  *
+import multiprocessing as mp
+from utility.evaluate import  *
 
 parser = argparse.ArgumentParser(description="Run NGCF.")
 parser.add_argument('--weights_path', nargs='?', default='',
@@ -13,49 +14,30 @@ parser.add_argument('--data_path', default='../Data/',
                     help='Input data path.')
 parser.add_argument('--proj_path', nargs='?', default='',
                     help='Project path.')
-
-parser.add_argument('--dataset', default='CIKM-toy',
+parser.add_argument('--dataset', default='CIKM',
                     help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
 parser.add_argument('--pretrain', type=int, default=0,
                     help='0: No pretrain, -1: Pretrain with the learned embeddings, 1:Pretrain with stored models.')
-parser.add_argument('--verbose', type=int, default=1,
-                    help='Interval of evaluation.')
-parser.add_argument('--epoch', type=int, default= 2,
-                    help='Number of epoch.')
-parser.add_argument('--embed_size', type=int, default=64,
-                    help='Embedding size.')
-parser.add_argument('--layer_size', nargs='+', default=[64, ],
-                    help='Output sizes of every layer')
-parser.add_argument('--batch_size', type=int, default=1024,
-                    help='Batch size.')
-parser.add_argument('--regs', type= float,  nargs='?', default= [1e-5 ,1e-5 ,1e-2],
-                    help='Regularizations.')
-parser.add_argument('--lr', type=float, default=0.01,
-                    help='Learning rate.')
-parser.add_argument('--model_type', type= str, default='ngcf',
-                    help='Specify the name of model (ngcf).')
-parser.add_argument('--adj_type', type= str, default='norm',
-                    help='Specify the type of the adjacency (laplacian) matrix from {plain, norm, mean}.')
-parser.add_argument('--alg_type', nargs='?', default='ngcf',
-                    help='Specify the type of the graph convolutional layer from {ngcf, gcn, gcmc}.')
-parser.add_argument('--gpu_id', type=int, default=0,
-                    help='0 for NAIS_prod, 1 for NAIS_concat')
-parser.add_argument('--node_dropout_flag', type=int, default=0,
-                    help='0: Disable node dropout, 1: Activate node dropout')
-parser.add_argument('--node_dropout', type= float, default=[0.1, ],
-                    help='Keep probability w.r.t. node dropout (i.e., 1-dropout_ratio) for each deep layer. 1: no dropout.')
-parser.add_argument('--mess_dropout', type= float, default=[0.1],
-                    help='Keep probability w.r.t. message dropout (i.e., 1-dropout_ratio) for each deep layer. 1: no dropout.')
-parser.add_argument('--Ks', nargs='+', default= [20, 40, 60, 80, 100],
-                    help='kth first in rank performance evaluation.')
+parser.add_argument('--verbose', type=int, default=1, help='Interval of evaluation.')
+parser.add_argument('--epoch', type=int, default= 1, help='Number of epoch.')
+parser.add_argument('--embed_size', type=int, default=64, help='Embedding size.')
+parser.add_argument('--layer_size', nargs='+', default=[64, ], help='Output sizes of every layer')
+parser.add_argument('--batch_size', type=int, default= 4096, help='Batch size.')
+parser.add_argument('--regs', type= float,  default= 1e-5, help='Regularizations.')
+parser.add_argument('--lr', type=float, default=0.01, help='Learning rate.')
+parser.add_argument('--model_type', type= str, default='ngcf', help='Specify the name of model (ngcf).')
+parser.add_argument('--adj_type', type= str, default='norm', help='Specify the type of the adjacency (laplacian) matrix from {plain, norm, mean}.')
+parser.add_argument('--alg_type', nargs='?', default='ngcf', help='Specify the type of the graph convolutional layer from {ngcf, gcn, gcmc}.')
+parser.add_argument('--gpu_id', type=int, default=0, help='0 for NAIS_prod, 1 for NAIS_concat')
+parser.add_argument('--node_dropout_flag', type=int, default=0, help='0: Disable node dropout, 1: Activate node dropout')
+parser.add_argument('--node_dropout', type= float, default= 0.1, help='Keep probability w.r.t. node dropout (i.e., 1-dropout_ratio) for each deep layer. 1: no dropout.')
+parser.add_argument('--mess_dropout', type= float, default= 0.1, help='Keep probability w.r.t. message dropout (i.e., 1-dropout_ratio) for each deep layer. 1: no dropout.')
+parser.add_argument('--Ks', nargs='+', default= [20, 40, 60, 80, 100], help='kth first in rank performance evaluation.')
 parser.add_argument('--print_every', type= int, default= 10, help= "print every several batches. ")
-parser.add_argument('--save_flag', type=int, default=0,
-                    help='0: Disable model saver, 1: Activate model saver')
-parser.add_argument('--report', type=int, default=0,
-                    help='0: Disable performance report w.r.t. sparsity levels, 1: Show performance report w.r.t. sparsity levels')
+parser.add_argument('--save_flag', type=int, default=0, help='0: Disable model saver, 1: Activate model saver')
+parser.add_argument('--report', type=int, default=0, help='0: Disable performance report w.r.t. sparsity levels, 1: Show performance report w.r.t. sparsity levels')
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
-
 
 dataset = Data(path=os.path.join(args.data_path, args.dataset),
                batch_size=args.batch_size,
@@ -175,9 +157,8 @@ else:
 Get the performance w.r.t. different sparsity levels.
 """
 if args.report == 1:
-    assert args.test_flag == 'full'
     users_to_test_list, split_state = dataset.get_sparsity_split()
-    users_to_test_list.append(list(dataset.test_set.keys()))
+    users_to_test_list.append(list(dataset.test_users))
     split_state.append('all')
 
     report_path = '%sreport/%s/%s.result' % (args.proj_path, args.dataset, model.model_type)
@@ -215,7 +196,7 @@ for epoch in range(args.epoch):
     loss, mf_loss, emb_loss, reg_loss = 0., 0., 0., 0.
     n_batch = dataset.n_train // args.batch_size + 1
 
-    for it in range(n_batch):
+    for it in range(12):
         users, pos_items, neg_items = dataset.sample()
         _, batch_loss, batch_mf_loss, batch_emb_loss, batch_reg_loss = sess.run(
             [model.opt, model.loss, model.mf_loss, model.emb_loss, model.reg_loss],
@@ -232,16 +213,8 @@ for epoch in range(args.epoch):
             print("%d: loss %.4f mf loss %.4f emb loss %.4f reg loss %.4f" % (it, loss, mf_loss, emb_loss, reg_loss))
     print("epoch %d conclude." % (epoch,))
 
-    # print the test evaluation metrics each 10 epochs; pos:neg = 1:10.
-    if (epoch + 1) % 10 != 0:
-        if args.verbose > 0 and epoch % args.verbose == 0:
-            perf_str = 'Epoch %d [%.1fs]: train==[%.5f=%.5f + %.5f]' % (
-                epoch, time() - t1, loss, mf_loss, reg_loss)
-            print(perf_str)
-        continue
-
     t2 = time()
-    res = evaluate(sess, model, dataset.test_users, dataset, args.batchsize, args.Ks, drop_flag=True)
+    res = evaluate(sess, model, dataset.test_users, dataset, args.batch_size, args.Ks, drop_flag=True)
 
     t3 = time()
 
@@ -251,16 +224,19 @@ for epoch in range(args.epoch):
     ndcg_loger.append(res['ndcg'])
     hit_loger.append(res['hit_ratio'])
 
-    if args.verbose > 0:
-        perf_str = 'Epoch %d [%.1fs + %.1fs]: train==[%.5f=%.5f + %.5f + %.5f], recall=[%.5f, %.5f], ' \
-                   'precision=[%.5f, %.5f], hit=[%.5f, %.5f], ndcg=[%.5f, %.5f]' % \
-                   (epoch, t2 - t1, t3 - t2, loss, mf_loss, emb_loss, reg_loss, res['recall'][0], res['recall'][-1],
-                    res['precision'][0], res['precision'][-1], res['hit_ratio'][0], res['hit_ratio'][-1],
-                    res['ndcg'][0], res['ndcg'][-1])
-        print(perf_str)
+    perf_str = 'Epoch %d [training %.1fs + testing %.1fs]: \n' \
+               'train loss==[%.5f=%.5f + %.5f + %.5f]\n' \
+               'recall=[%.5f, %.5f]\n' \
+               'precision=[%.5f, %.5f]\n' \
+               'hit=[%.5f, %.5f]\n' \
+               'ndcg=[%.5f, %.5f]\n' \
+               %(epoch, t2 - t1, t3 - t2, loss, mf_loss, emb_loss, reg_loss, res['recall'][0], res['recall'][-1],
+                res['precision'][0], res['precision'][-1], res['hit_ratio'][0], res['hit_ratio'][-1],
+                res['ndcg'][0], res['ndcg'][-1])
+    print(perf_str)
 
     cur_best_pre_0, stopping_step, should_stop = early_stopping(res['recall'][0], cur_best_pre_0,
-                                                                stopping_step, expected_order='acc', flag_step=5)
+                                                                stopping_step, expected_order='acc', tolerance=5)
 
     # *********************************************************
     # early stopping when cur_best_pre_0 is decreasing for ten successive steps.
@@ -278,9 +254,8 @@ pres = np.array(pre_loger)
 ndcgs = np.array(ndcg_loger)
 hit = np.array(hit_loger)
 
-best_rec_0 = max(recs[:, 0])
+best_rec_0 = np.max(recs[:, 0])
 it = list(recs[:, 0]).index(best_rec_0)
-
 final_perf = "Best Iter=[%d]@[%.1f]\trecall=[%s], precision=[%s], hit=[%s], ndcg=[%s]" % \
              (it, time() - t0, '\t'.join(['%.5f' % r for r in recs[it]]),
               '\t'.join(['%.5f' % r for r in pres[it]]),

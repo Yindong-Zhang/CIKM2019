@@ -8,7 +8,7 @@ import tensorflow as tf
 from utility.helper import *
 import numpy as np
 from scipy.sparse import csr_matrix
-from utility.batch_test import *
+from utility.evaluate import *
 import os
 import sys
 from tensorflow.contrib.layers.python.layers import batch_norm as batch_norm
@@ -348,7 +348,7 @@ if __name__ == '__main__':
             print(perf_str)
 
         cur_best_pre_0, stopping_step, should_stop = early_stopping(ret['recall'][0], cur_best_pre_0,
-                                                                    stopping_step, expected_order='acc', flag_step=5)
+                                                                    stopping_step, expected_order='acc', tolerance=5)
 
         # *********************************************************
         # early stopping when cur_best_pre_0 is decreasing for ten successive steps.

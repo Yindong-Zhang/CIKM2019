@@ -8,13 +8,13 @@ import tensorflow as tf
 from utility.helper import *
 import numpy as np
 from scipy.sparse import csr_matrix
-from utility.batch_test import *
+from utility.evaluate import *
 import os
 import sys
 os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
 
 class BPRMF(object):
-    def __init__(self, data_config):
+    def __init__(self, data_config, args):
         self.model_type = 'bprmf'
 
         self.n_users = data_config['n_users']

@@ -14,6 +14,7 @@ import os
 from pprint import pprint
 
 
+
 def split_sparse_tensor(sp_matrix, split_ratio):
     coo_mat = sp_matrix.tocoo()
     rows = coo_mat.row
@@ -31,7 +32,6 @@ class Data(object):
         self.test_ratio = test_ratio
         self.val_ratio = val_ratio
         #get number of users and items
-        self.neg_pools = {}
         self.weight_buy = w_by
         self.weight_cart = w_ct
         self.weight_collect = w_clt
@@ -42,7 +42,8 @@ class Data(object):
         self.adj['ct'] = sp.load_npz(os.path.join(path, "cart_adj.npz"))
         self.adj['clt'] = sp.load_npz(os.path.join(path, "collect_adj.npz"))
         self.adj['clk'] = sp.load_npz(os.path.join(path, "clk_adj.npz"))
-
+        self.adj['sum'] = self.weight_buy *  self.adj['by'] + self.weight_cart * self.adj['ct'] + \
+                                self.weight_collect * self.adj['clt'] + self.weight_click *  self.adj['clk']
         self.train_adj = {}
         self.test_adj = {}
         self.train_adj['by'], self.test_adj['by'] = split_sparse_tensor(self.adj['by'], split_ratio= test_ratio)
@@ -62,9 +63,6 @@ class Data(object):
         self.test_users= np.arange(self.n_users)[test_user_int_count > 0]
         rd.seed(seed)
         self.rd = np.random.RandomState(seed)
-
-
-
 
     def get_adj_mat(self):
         adj_mat = {}
@@ -157,10 +155,21 @@ class Data(object):
                     break
         return candidate
 
+    def sample_pair(self, user):
+        pairs = (('by', 'ct'), ('by', 'clk'), ('by', None), ('ct', 'clk'), ('ct', None), ('clk', None))
+        while True:
+            pos, neg = pair = rd.choice(pairs)
+            if self.train_adj[pos][user].getnnz() and (self.train_adj[neg][user].getnnz() if neg else True):
+                break
+        pos_item = self.sample_item_for_user(user, pos)
+        neg_item = self.sample_item_for_user(user, neg)
+        return pos_item, neg_item
+
 
     def sample(self):
         users = [self.rd.randint(0, self.n_users) for i in range(self.batch_size)]
         pairs = (('by', 'ct'), ('by', 'clk'), ('by', None), ('ct', 'clk'), ('ct', None), ('clk', None))
+
 
         pos_items, neg_items = [], []
         for i, u in enumerate(users):
@@ -260,6 +269,7 @@ class Data(object):
 
 
 if __name__ == "__main__":
+    t0 = time()
     data = Data("../../Data/CIKM-toy", 1024, 0.2, 0.1, 10, 3, 3, 1, 32)
     data.get_adj_mat()
     for i in enumerate(range(20)):
@@ -267,3 +277,4 @@ if __name__ == "__main__":
         pprint(users)
         pprint(pos)
         pprint(neg)
+    t1= time()

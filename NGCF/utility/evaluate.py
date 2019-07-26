@@ -10,10 +10,10 @@ from utility.parser import parse_args
 from utility.data_utils import *
 import multiprocessing
 import heapq
+from pathos.multiprocessing import ProcessingPool as Pool
+num_cores = multiprocessing.cpu_count() // 2
 
-cores = multiprocessing.cpu_count() // 2
-
-def ranklist_by_heapq(user_pos_test, test_items, rating, Ks):
+def ranklist_by_heapq_(user_pos_test, test_items, rating, Ks):
     item_score = {}
     for i in test_items:
         item_score[i] = rating[i]
@@ -45,7 +45,7 @@ def get_auc(item_score, user_pos_test):
     auc = metrics.auc(ground_truth=r, prediction=posterior)
     return auc
 
-def ranklist_by_sorted(rating, test_items, test_relevancy_vec, Ks):
+def ranklist_by_heapq(rating, test_items, test_relevancy_vec, Ks):
     """
 
     :param rating: rating of all items
@@ -79,7 +79,7 @@ def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, b
     result = {'precision': np.zeros(len(Ks)), 'recall': np.zeros(len(Ks)), 'ndcg': np.zeros(len(Ks)),
               'hit_ratio': np.zeros(len(Ks))}
 
-    pool = multiprocessing.Pool(cores)
+    pool = Pool(num_cores)
 
     item_num = dataset.n_items
 
@@ -95,12 +95,12 @@ def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, b
         # user u's ratings for user u
         rating, u = x
         # user u's items in the training set
-        training_items = dataset.train_adj[u].nonzero()[1]
+        training_items = dataset.train_adj['sum'][u].nonzero()[1]
         # user u's items in the test set
         all_items = set(range(item_num))
         test_items = list(all_items - set(training_items))
 
-        user_relevancy_vec = dataset.test_set[u]
+        user_relevancy_vec = dataset.test_adj['sum'][u]
 
         r = ranklist_by_heapq(rating, test_items, user_relevancy_vec, Ks)
 
@@ -146,18 +146,18 @@ def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, b
             else:
                 rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
                                                               model.pos_items: item_batch,
-                                                              model.node_dropout: [0.] * len(args.layer_size),
-                                                              model.mess_dropout: [0.] * len(args.layer_size)})
+                                                              model.node_dropout: 0,
+                                                              model.mess_dropout: 0})
 
         user_batch_rating_uid = zip(rate_batch, user_batch)
         batch_result = pool.map(test_one_user, user_batch_rating_uid)
         count += len(batch_result)
 
-        for re in batch_result:
-            result['precision'] += re['precision']/n_test_users
-            result['recall'] += re['recall']/n_test_users
-            result['ndcg'] += re['ndcg']/n_test_users
-            result['hit_ratio'] += re['hit_ratio']/n_test_users
+        for res in batch_result:
+            result['precision'] += res['precision']/n_test_users
+            result['recall'] += res['recall']/n_test_users
+            result['ndcg'] += res['ndcg']/n_test_users
+            result['hit_ratio'] += res['hit_ratio']/n_test_users
 
 
     assert count == n_test_users
