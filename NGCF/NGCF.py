@@ -26,15 +26,17 @@ class NGCF(object):
         self.n_users = data_config['n_users']
         self.n_items = data_config['n_items']
 
-        self.n_fold = 100
+        self.n_fold = 50
 
         self.adj_list = data_config['norm_adj'] # an adj  (clk_adj, cart_adj, collect_adj, buy_adj)
         self.n_relation = len(self.adj_list)
         # self.n_nonzero_elems = [adj.count_nonzero() for adj in self.norm_adj]
 
         self.lr = args.lr
-
-        self.emb_dim = args.embed_size
+        # self.emb_size = args.embed_size
+        self.age_size, self.gender_size, self.stage_size, self.income_size, self.education_size  = args.age_size, args.gender_size,\
+                                                                                        args.stage_size, args.income_size, args.education
+        self.cate1_size, self.price_size = args.cate1_size, args.price_size
         self.batch_size = args.batch_size
 
         self.weight_size = args.layer_size
@@ -51,17 +53,20 @@ class NGCF(object):
         Create Placeholder for Input Data & Dropout.
         '''
         # placeholder definition
-        self.users = tf.placeholder(tf.int32, shape=(None,))
-        self.pos_items = tf.placeholder(tf.int32, shape=(None,))
-        self.neg_items = tf.placeholder(tf.int32, shape=(None,))
+        self.users =  tf.placeholder(tf.int32, shape=(self.batch_size, ), name= "users")
+        self.pos_items = tf.placeholder(tf.int32, shape=(self.batch_size,), name= "positve_items")
+        self.neg_items = tf.placeholder(tf.int32, shape=(self.batch_size,), name= "negative_items")
 
+        # self.users =  tf.placeholder(tf.int32, shape=(None,))
+        # self.pos_items = tf.placeholder(tf.int32, shape=(None,))
+        # self.neg_items = tf.placeholder(tf.int32, shape=(None,))
         # dropout: node dropout (adopted on the ego-networks);
         #          ... since the usage of node dropout have higher computational cost,
         #          ... please use the 'node_dropout_flag' to indicate whether use such technique.
         #          message dropout (adopted on the convolution operations).
         self.node_dropout_flag = args.node_dropout_flag
-        self.node_dropout = tf.placeholder(tf.float32, shape= ())
-        self.mess_dropout = tf.placeholder(tf.float32, shape= ())
+        self.node_dropout = tf.placeholder(tf.float32, shape= (), name= "node_dropout")
+        self.mess_dropout = tf.placeholder(tf.float32, shape= (), name= "mess_dropout")
 
         """
         *********************************************************
@@ -94,6 +99,10 @@ class NGCF(object):
         self.u_g_embeddings = tf.nn.embedding_lookup(self.ua_embeddings, self.users)
         self.pos_i_g_embeddings = tf.nn.embedding_lookup(self.ia_embeddings, self.pos_items)
         self.neg_i_g_embeddings = tf.nn.embedding_lookup(self.ia_embeddings, self.neg_items)
+
+        # self.u_g_embeddings = self.ua_embeddings[self.users]
+        # self.pos_i_g_embeddings = self.ia_embeddings[self.pos_items]
+        # self.neg_i_g_embeddings = self.ia_embeddings[self.neg_items]
 
         """
         *********************************************************
