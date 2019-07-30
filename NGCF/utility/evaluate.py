@@ -83,7 +83,7 @@ def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, b
 
     item_num = dataset.n_items
 
-    u_batch_size = batchsize * 2
+    u_batch_size = batchsize
     i_batch_size = batchsize
 
     n_test_users = len(test_users)
@@ -125,10 +125,10 @@ def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, b
                 item_batch = range(i_start, i_end)
 
                 if drop_flag == False:
-                    i_rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
+                    i_rate_batch = sess.run(model.rating, {model.users: user_batch,
                                                                 model.pos_items: item_batch})
                 else:
-                    i_rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
+                    i_rate_batch = sess.run(model.rating, {model.users: user_batch,
                                                                 model.pos_items: item_batch,
                                                                 model.node_dropout: 0.,
                                                                 model.mess_dropout: 0.})
@@ -141,10 +141,10 @@ def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, b
             item_batch = range(item_num)
 
             if drop_flag == False:
-                rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
+                rate_batch = sess.run(model.rating, {model.users: user_batch,
                                                               model.pos_items: item_batch})
             else:
-                rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
+                rate_batch = sess.run(model.rating, {model.users: user_batch,
                                                               model.pos_items: item_batch,
                                                               model.node_dropout: 0,
                                                               model.mess_dropout: 0})

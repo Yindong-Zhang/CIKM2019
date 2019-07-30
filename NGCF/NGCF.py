@@ -22,6 +22,15 @@ class NGCF(object):
                  data_config,
                  args,
                  pretrain_data):
+        """
+
+        :param adj_list:
+        :param user_attr:
+        :param item_attr:
+        :param data_config:
+        :param args:
+        :param pretrain_data:
+        """
         # argument settings
         self.model_type = 'ngcf'
         self.adj_type = args.adj_type
@@ -37,36 +46,38 @@ class NGCF(object):
         self.adj_list = adj_list # an adj  (clk_adj, cart_adj, collect_adj, buy_adj)
         self.n_relation = len(self.adj_list)
 
+        self.user_attr_names, self.user_attr_sp_names, self.user_attr_ds_names = \
+            data_config['user_attr_names'], data_config['user_sp_attr_names'], data_config['user_ds_attr_names']
         self.user_attr = {}
-        for attr in ('gender', 'age', 'education', 'income', 'career', 'stage'):
-            self.user_attr[attr] = tf.constant(tf.convert_to_tensor(user_attr[attr]))
+        for attr in data_config['user_sp_attr_names']:
+            self.user_attr[attr] = tf.convert_to_tensor(user_attr[attr], dtype= tf.int32)
+        for attr in data_config['user_ds_attr_names']:
+            self.user_attr[attr] = tf.convert_to_tensor(user_attr[attr], dtype= tf.float32)
 
-        # self.user_attr["gender"] = tf.constant(tf.convert_to_tensor(user_attr['gender']))
-        # self.user_attr['age'] = tf.constant(tf.convert_to_tensor(user_attr['age']))
-        # self.user_attr['education'] = tf.constant(tf.convert_to_tensor(user_attr['education']))
-        # self.user_attr['income'] = tf.constant(tf.convert_to_tensor(user_attr['income']))
-        # self.user_attr['stage'] = tf.constant(tf.convert_to_tensor(user_attr['stage']))
-
+        self.item_attr_names, self.item_attr_sp_names = data_config['item_attr_names'], data_config['item_sp_attr_names']
         self.item_attr = {}
-        for attr in ('price', 'cate1'):
-            self.item_attr[attr] = tf.constant(tf.convert_to_tensor(item_attr[attr]))
-        # self.item_attr['price'] = tf.constant(tf.convert_to_tensor(item_attr['price']))
-        # self.item_attr['cate1'] = tf.constant(tf.convert_to_tensor(item_attr['cate1']))
-        self.lr = args.lr
-        self.emb_size = args.embed_size
+        for attr in data_config['item_attr_names']:
+            self.item_attr[attr] = tf.convert_to_tensor(item_attr[attr], dtype= tf.int32)
+
+        self.attr_size = {}
+        for attr in data_config['user_attr_names']:
+            self.attr_size[attr] = data_config['attr_size'][attr]
+        for attr in data_config['item_attr_names']:
+            self.attr_size[attr] = data_config['attr_size'][attr]
+
+
+        self.user_attr_dim  = args.user_attr_dim
         self.user_dim = args.user_dim
-        self.age_size, self.gender_size, self.stage_size, self.income_size, self.education_size = \
-            data_config['age_size'], data_config['gender_size'], data_config['stage_size'], data_config['income_size'], data_config['education_size']
-        self.age_dim, self.gender_dim, self.stage_dim, self.income_dim, self.education_dim  = args.age_dim, args.gender_dim, \
-                                                                                              args.stage_dim, args.income_dim, args.education_dim
-        self.user_dim_sum = self.user_dim + self.age_dim + self.gender_dim + self.income_dim + self.stage_dim + self.education-dim
+        self.user_dim_sum = len(self.user_attr) * self.user_attr_dim + self.user_dim
 
         self.item_dim = args.item_dim
-        self.cate1_size, self.price_size = \
-            data_config['cate1_size'], data_config['price_size']
-        self.cate1_dim, self.price_dim = args.cate1_dim, args.price_dim
-        self.item_dim_sum = self.item_dim + self.cate1_dim + self.price_dim
+        self.item_attr_dim = args.item_attr_dim
+        self.item_dim_sum = self.item_dim + len(self.item_attr) * self.item_attr_dim
+
         self.batch_size = args.batch_size
+        self.lr = args.lr
+
+        self.embed_size = args.embed_size
 
         self.weight_size = args.layer_size
         self.n_layers = len(self.weight_size)
@@ -82,9 +93,9 @@ class NGCF(object):
         Create Placeholder for Input Data & Dropout.
         '''
         # placeholder definition
-        self.users =  tf.placeholder(tf.int32, shape=(self.batch_size, ), name= "users")
-        self.pos_items = tf.placeholder(tf.int32, shape=(self.batch_size,), name= "positve_items")
-        self.neg_items = tf.placeholder(tf.int32, shape=(self.batch_size,), name= "negative_items")
+        self.users =  tf.placeholder(tf.int32, shape=(None, ), name= "users")
+        self.pos_items = tf.placeholder(tf.int32, shape=(None,), name= "positve_items")
+        self.neg_items = tf.placeholder(tf.int32, shape=(None,), name= "negative_items")
 
         # self.users =  tf.placeholder(tf.int32, shape=(None,))
         # self.pos_items = tf.placeholder(tf.int32, shape=(None,))
@@ -137,7 +148,7 @@ class NGCF(object):
         *********************************************************
         Inference for the testing phase.
         """
-        self.batch_ratings = tf.matmul(self.u_g_embeddings, self.pos_i_g_embeddings, transpose_a=False, transpose_b=True)
+        self.rating = tf.matmul(self.u_g_embeddings, self.pos_i_g_embeddings, transpose_a=False, transpose_b=True)
 
         """
         *********************************************************
@@ -156,22 +167,23 @@ class NGCF(object):
         initializer = tf.contrib.layers.xavier_initializer()
 
         if self.pretrain_data is None:
-            all_weights['age_embedding'] = tf.Variable(initializer([self.age_size, self.age_dim]), name='age_embedding')
-            all_weights['gender_embedding'] = tf.Variable(initializer([self.gender_size, self.gender_dim]), name='gender_embedding')
-            all_weights['education_embedding'] = tf.Variable(initializer([self.education_size, self.education_dim]), name='education_embedding')
-            all_weights['income_embedding'] = tf.Variable(initializer([self.income_size, self.income_dim]), name='income_embedding')
-            all_weights['stage_weight'] = tf.Variable(initializer([self.stage_size, self.stage_dim]), name='stage_weight')
-            all_weights['user_embedding'] = tf.Variable(initializer([self.n_users, self.emb_size]), name= "user_bemdding")
+            all_weights['age_embedding'] = tf.Variable(initializer([self.attr_size['age'], self.user_attr_dim]), name='age_embedding')
+            all_weights['career_embedding'] = tf.Variable(initializer([self.attr_size['career'], self.user_attr_dim]), name='career_embedding')
+            all_weights['gender_embedding'] = tf.Variable(initializer([self.attr_size['gender'], self.user_attr_dim]), name='gender_embedding')
+            all_weights['education_embedding'] = tf.Variable(initializer([self.attr_size['education'], self.user_attr_dim]), name='education_embedding')
+            all_weights['income_embedding'] = tf.Variable(initializer([self.attr_size['income'], self.user_attr_dim]), name='income_embedding')
+            all_weights['stage_weight'] = tf.Variable(initializer([self.attr_size['stage'], self.user_attr_dim]), name='stage_weight')
+            all_weights['user_embedding'] = tf.Variable(initializer([self.n_users, self.user_dim]), name= "user_bemdding")
 
-            all_weights['wu_embed'] = tf.Variable(initializer([self.user_dim_sum, self.emb_size], name= "user_embed_transform"))
-            all_weights['bu_embed'] = tf.Variable(initializer([1, self.emb_size]), name= 'user_embed_bias')
+            all_weights['wu_embed'] = tf.Variable(initializer([self.user_dim_sum, self.embed_size]), name="user_embed_transform")
+            all_weights['bu_embed'] = tf.Variable(initializer([1, self.embed_size]), name='user_embed_bias')
 
-            all_weights['cate1_embedding'] = tf.Variable(initializer([self.cate1_size, self.cate1_dim]), name='cate1_embedding')
-            all_weights['price_embedding'] = tf.Variable(initializer([self.price_size, self.price_dim]), name='item_embedding')
-            all_weights['item_embedding'] = tf.Variable(initializer([self.n_items, self.emb_dim]), name='item_embedding')
+            all_weights['cate1_embedding'] = tf.Variable(initializer([self.attr_size['cate1'], self.item_attr_dim]), name='cate1_embedding')
+            all_weights['price_embedding'] = tf.Variable(initializer([self.attr_size['price'], self.item_attr_dim]), name='item_embedding')
+            all_weights['item_embedding'] = tf.Variable(initializer([self.n_items, self.item_dim]), name='item_embedding')
 
-            all_weights['wi_embed'] = tf.Variable(initializer([self.item_dim_sum, self.embed_size], name= 'item_embed_transform'))
-            all_weights['bi_embed'] = tf.Variable(initializer([1, self.embed_size], name = 'bi_embedding'))
+            all_weights['wi_embed'] = tf.Variable(initializer([self.item_dim_sum, self.embed_size]), name='item_embed_transform')
+            all_weights['bi_embed'] = tf.Variable(initializer([1, self.embed_size]), name ='bi_embedding')
             print('using xavier initialization')
         else:
             all_weights['user_embedding'] = tf.Variable(initial_value=self.pretrain_data['user_embed'], trainable=True,
@@ -180,7 +192,7 @@ class NGCF(object):
                                                         name='item_embedding', dtype=tf.float32)
             print('using pretrained initialization')
 
-        self.weight_size_list = [self.emb_size] + self.weight_size
+        self.weight_size_list = [self.embed_size] + self.weight_size
 
         for k in range(self.n_layers):
             all_weights['W_gc_%d' %k] = [tf.Variable(
@@ -210,17 +222,21 @@ class NGCF(object):
             if i_fold == self.n_fold -1:
                 end = self.n_users + self.n_items
             else:
+
                 end = (i_fold + 1) * fold_len
 
-            A_fold_hat.append(self._convert_sp_mat_to_sp_tensor(X[start:end]))
+            A_fold_hat.append(convert_to_ellpack(X[start:end]))
         return A_fold_hat
 
+    # TODO: dropout in ellpack format?
     def _split_A_hat_node_dropout(self, X):
         A_fold_hat = []
 
         fold_len = (self.n_users + self.n_items) // self.n_fold
         for i_fold in range(self.n_fold):
             start = i_fold * fold_len
+
+
             if i_fold == self.n_fold -1:
                 end = self.n_users + self.n_items
             else:
@@ -235,24 +251,21 @@ class NGCF(object):
 
     def _create_user_embedding(self):
         user_embedding = {}
-        user_embedding['gender'] = tf.embedding_lookup(self.weights['gender_embedding'], self.user_attr['gender'])
-        user_embedding['age'] = tf.embedding_lookup(self.weights['age_embedding'], self.user_attr['age'])
-        user_embedding['education'] = tf.embedding_lookup(self.weight['education_embedding'], self.user_attr['education'])
-        user_embedding['income']= tf.embedding_lookup(self.weight['income_embedding'], self.user_attr['income'])
-        user_embedding['stage'] = tf.matmul(self.user_attr['stage'], self.weight['stage_weight'])
+        for attr in self.user_attr_sp_names:
+            user_embedding[attr] = tf.nn.embedding_lookup(self.weights['%s_embedding' %(attr, )], self.user_attr[attr])
+        user_embedding['stage'] = tf.matmul(self.user_attr['stage'], self.weights['stage_weight'])
         user_embedding['unique'] = self.weights['user_embedding']
 
-        user_embedding_concat = tf.concat([user_embedding['gender'], user_embedding['age'], user_embedding['education'],
-                                              user_embedding['income'], user_embedding['stage'], user_embedding['unique']], axis= -1)
+        user_embedding_concat = tf.concat([user_embedding[attr] for attr in self.user_attr_names + ('unique', )], axis= -1)
         user_rep = tf.nn.relu(tf.matmul(user_embedding_concat, self.weights['wu_embed']) + self.weights['bu_embed'])
         return user_rep
 
     def _create_item_embedding(self):
         item_embedding = {}
-        item_embedding['price'] = tf.embedding_lookup(self.weights['price_embedding'], self.item_attr['price'])
-        item_embedding['cate1'] = tf.embedding_lookup(self.weights['cate1_embedding'], self.item_attr['cate1'])
+        item_embedding['price'] = tf.nn.embedding_lookup(self.weights['price_embedding'], self.item_attr['price'])
+        item_embedding['cate1'] = tf.nn.embedding_lookup(self.weights['cate1_embedding'], self.item_attr['cate1'])
         item_embedding['unique'] = self.weights['item_embedding']
-        item_embedding_concat = tf.concat(item_embedding['price'], item_embedding['cate1'], item_embedding['unique'])
+        item_embedding_concat = tf.concat([item_embedding['price'], item_embedding['cate1'], item_embedding['unique']], axis= -1)
         item_rep = tf.nn.relu(tf.matmul(item_embedding_concat, self.weights['wi_embed']) + self.weights['bi_embed'])
         return item_rep
 
@@ -261,7 +274,7 @@ class NGCF(object):
 
 
         user_embedding = self._create_user_embedding()
-        item_embedding = self._ceate_item_embedding()
+        item_embedding = self._create_item_embedding()
 
         ego_embeddings = tf.concat([user_embedding, item_embedding], axis=0)
         # Generate a set of adjacency sub-matrix.
@@ -283,7 +296,7 @@ class NGCF(object):
                 # sum messages of neighbors.
                 temp_embed = []
                 for f in range(self.n_fold):
-                    temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[r][f], ego_embeddings))
+                    temp_embed.append(tf.nn.embedding_lookup_sparse(ego_embeddings, *A_fold_hat[r][f], combiner= 'sum'))
 
                 embeddings = tf.concat(temp_embed, 0)
                 side_embeddings.append(embeddings)
@@ -388,6 +401,9 @@ class NGCF(object):
         coo = X.tocoo().astype(np.float32)
         indices = np.mat([coo.row, coo.col]).transpose()
         return tf.SparseTensor(indices, coo.data, coo.shape)
+
+
+
 
     def _dropout_sparse(self, X, keep_prob, n_nonzero_elems):
         """

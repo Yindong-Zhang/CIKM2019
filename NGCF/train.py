@@ -8,21 +8,15 @@ import multiprocessing as mp
 from utility.evaluate import  *
 
 parser = argparse.ArgumentParser(description="Run NGCF.")
-parser.add_argument('--weights_path', nargs='?', default='',
-                    help='Store model path.')
-parser.add_argument('--data_path', default='../Data/',
-                    help='Input data path.')
-parser.add_argument('--proj_path', nargs='?', default='',
-                    help='Project path.')
-parser.add_argument('--dataset', default='CIKM',
-                    help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
-parser.add_argument('--pretrain', type=int, default=0,
-                    help='0: No pretrain, -1: Pretrain with the learned embeddings, 1:Pretrain with stored models.')
+parser.add_argument('--weights_path', default='', help='Store model path.')
+parser.add_argument('--data_path', default='../Data/', help='Input data path.')
+parser.add_argument('--proj_path', nargs='?', default='', help='Project path.')
+parser.add_argument('--dataset', default='CIKM', help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
+parser.add_argument('--pretrain', type=int, default=0, help='0: No pretrain, -1: Pretrain with the learned embeddings, 1:Pretrain with stored models.')
 parser.add_argument('--verbose', type=int, default=1, help='Interval of evaluation.')
 parser.add_argument('--epoch', type=int, default= 1, help='Number of epoch.')
-parser.add_argument('--embed_size', type=int, default=64, help='Embedding size.')
 parser.add_argument('--layer_size', nargs='+', default=[64, ], help='Output sizes of every layer')
-parser.add_argument('--batch_size', type=int, default= 4096, help='Batch size.')
+parser.add_argument('--batch_size', type=int, default= 256, help='Batch size.')
 parser.add_argument('--regs', type= float,  default= 1e-5, help='Regularizations.')
 parser.add_argument('--lr', type=float, default=0.01, help='Learning rate.')
 parser.add_argument('--model_type', type= str, default='ngcf', help='Specify the name of model (ngcf).')
@@ -32,7 +26,12 @@ parser.add_argument('--gpu_id', type=int, default=0, help='0 for NAIS_prod, 1 fo
 parser.add_argument('--node_dropout_flag', type=int, default=0, help='0: Disable node dropout, 1: Activate node dropout')
 parser.add_argument('--node_dropout', type= float, default= 0.1, help='Keep probability w.r.t. node dropout (i.e., 1-dropout_ratio) for each deep layer. 1: no dropout.')
 parser.add_argument('--mess_dropout', type= float, default= 0.1, help='Keep probability w.r.t. message dropout (i.e., 1-dropout_ratio) for each deep layer. 1: no dropout.')
-parser.add_argument('--Ks', nargs='+', default= [20, 40, 60, 80, 100], help='kth first in rank performance evaluation.')
+parser.add_argument('--user_dim', type= int, default= 32, help = 'dimension of user specific vector')
+parser.add_argument('--user_attr_dim', type= int, default= 16, help= 'embedding dimension for each user attr ')
+parser.add_argument('--item_dim', type= int, default= 32, help= 'dimension of item specific vector')
+parser.add_argument('--item_attr_dim', type= int, default= 32, help = 'embedding dimension for each item attr')
+parser.add_argument('--embed_size', type=int, default=64, help='overall Embedding size for item and users.')
+parser.add_argument('--Ks', nargs='+', default= [50, ], help='kth first in rank performance evaluation.')
 parser.add_argument('--print_every', type= int, default= 10, help= "print every several batches. ")
 parser.add_argument('--save_flag', type=int, default=0, help='0: Disable model saver, 1: Activate model saver')
 parser.add_argument('--report', type=int, default=0, help='0: Disable performance report w.r.t. sparsity levels, 1: Show performance report w.r.t. sparsity levels')
@@ -49,9 +48,16 @@ dataset = Data(path=os.path.join(args.data_path, args.dataset),
                w_clk= 1,
                )
 
-config = dict()
-config['n_users'] = dataset.n_users
-config['n_items'] = dataset.n_items
+data_config = dict()
+data_config['n_users'] = dataset.n_users
+data_config['n_items'] = dataset.n_items
+data_config['attr_size'] = dataset.attr_size
+data_config['user_attr_names'] = dataset.user_attr_names
+data_config['user_sp_attr_names'] = dataset.user_sp_attr_names
+data_config['user_ds_attr_names'] = dataset.user_ds_attr_names
+data_config['item_attr_names'] = dataset.item_sp_attr_names
+data_config['item_sp_attr_names'] = dataset.item_sp_attr_names
+
 
 """
 *********************************************************
@@ -60,19 +66,19 @@ Generate the Laplacian matrix, where each entry defines the decay factor (e.g., 
 plain_adj, norm_adj, mean_adj = dataset.get_adj_mat()
 
 if args.adj_type == 'plain':
-    config['norm_adj'] = plain_adj
+    adj_list = plain_adj
     print('use the plain adjacency matrix')
 
 elif args.adj_type == 'norm':
-    config['norm_adj'] = norm_adj
+    adj_list = norm_adj
     print('use the normalized adjacency matrix')
 
 elif args.adj_type == 'gcmc':
-    config['norm_adj'] = mean_adj
+    adj_list = mean_adj
     print('use the gcmc adjacency matrix')
 
 else:
-    config['norm_adj'] = mean_adj + sp.eye(mean_adj.shape[0])
+    adj_list = mean_adj + sp.eye(mean_adj.shape[0])
     print('use the mean adjacency matrix')
 
 t0 = time()
@@ -92,7 +98,7 @@ if args.pretrain == -1:
 else:
     pretrain_data = None
 
-model = NGCF(data_config=config, args= args, pretrain_data=pretrain_data)
+model = NGCF(adj_list, dataset.user_attr, dataset.item_attr, data_config=data_config, args= args, pretrain_data=pretrain_data)
 
 """
 *********************************************************
@@ -187,23 +193,25 @@ if args.report == 1:
 Train.
 """
 loss_loger, pre_loger, rec_loger, ndcg_loger, hit_loger = [], [], [], [], []
-stopping_step = 0
+tolerant_step = 0
 should_stop = False
 
 for epoch in range(args.epoch):
     print("Epoch %s training ..." %(epoch,))
     t1 = time()
     loss, mf_loss, emb_loss, reg_loss = 0., 0., 0., 0.
-    n_batch = dataset.n_train // args.batch_size + 1
+    n_batch = 2 * dataset.n_train // args.batch_size + 1 # my choice
 
-    for it in range(12):
+    for it in range(n_batch):
         users, pos_items, neg_items = dataset.sample()
         _, batch_loss, batch_mf_loss, batch_emb_loss, batch_reg_loss = sess.run(
             [model.opt, model.loss, model.mf_loss, model.emb_loss, model.reg_loss],
-            feed_dict={model.users: users, model.pos_items: pos_items,
+            feed_dict={model.users: users,
+                       model.pos_items: pos_items,
+                       model.neg_items: neg_items,
                        model.node_dropout: args.node_dropout,
                        model.mess_dropout: args.mess_dropout,
-                       model.neg_items: neg_items})
+                       })
         loss = (it * loss + batch_loss) / (it + 1)
         mf_loss = (it * mf_loss + batch_mf_loss) / (it + 1)
         emb_loss = (it * emb_loss + batch_emb_loss) / (it + 1)
@@ -214,7 +222,7 @@ for epoch in range(args.epoch):
     print("epoch %d conclude." % (epoch,))
 
     t2 = time()
-    res = evaluate(sess, model, dataset.test_users, dataset, args.batch_size, args.Ks, drop_flag=True)
+    res = evaluate(sess, model, dataset.test_users, dataset, args.batch_size, args.Ks, drop_flag=True, batch_test_flag= False)
 
     t3 = time()
 
@@ -235,8 +243,8 @@ for epoch in range(args.epoch):
                 res['ndcg'][0], res['ndcg'][-1])
     print(perf_str)
 
-    cur_best_pre_0, stopping_step, should_stop = early_stopping(res['recall'][0], cur_best_pre_0,
-                                                                stopping_step, expected_order='acc', tolerance=5)
+    cur_best_pre_0, tolerant_step, should_stop = early_stopping(res['recall'][0], cur_best_pre_0,
+                                                                tolerant_step, expected_order='acc', tolerance=5)
 
     # *********************************************************
     # early stopping when cur_best_pre_0 is decreasing for ten successive steps.

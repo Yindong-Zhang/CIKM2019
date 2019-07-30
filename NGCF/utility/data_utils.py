@@ -61,6 +61,35 @@ class Data(object):
         self.print_statistics()
         test_user_int_count = np.squeeze(np.array(self.test_adj['sum'].sum(1)))
         self.test_users= np.arange(self.n_users)[test_user_int_count > 0]
+
+        self.user_sp_attr_names = ('age', 'gender', 'career', 'income', 'education')
+        self.user_ds_attr_names = ('stage', )
+        self.user_attr_names = self.user_ds_attr_names + self.user_sp_attr_names
+
+        self.user_attr = {}
+        user_attr_npz = np.load(os.path.join(self.path, 'user_attrs.npz'))
+        for attr in self.user_attr_names:
+            if attr in self.user_sp_attr_names:
+                self.user_attr[attr] = user_attr_npz[attr].reshape(-1, )
+            else:
+                self.user_attr[attr] = user_attr_npz[attr]
+
+        self.item_attr_names = self.item_sp_attr_names = ('cate1', 'price')
+        self.item_attr = {}
+        for attr in self.item_sp_attr_names:
+            item_attr_npz = np.load(os.path.join(self.path, 'item_attrs.npz'))
+            self.item_attr[attr] = item_attr_npz[attr].reshape(-1, )
+
+        self.attr_size = {}
+        for attr in self.user_attr_names:
+            if attr in self.user_sp_attr_names:
+                self.attr_size[attr] = int(np.max(self.user_attr[attr]) + 1)
+            else:
+                self.attr_size[attr] = self.user_attr[attr].shape[1]
+
+        for attr in self.item_attr_names:
+            self.attr_size[attr] = int(np.max(self.item_attr[attr]) + 1)
+
         rd.seed(seed)
         self.rd = np.random.RandomState(seed)
 
@@ -272,6 +301,8 @@ if __name__ == "__main__":
     t0 = time()
     data = Data("../../Data/CIKM-toy", 1024, 0.2, 0.1, 10, 3, 3, 1, 32)
     data.get_adj_mat()
+    user_attr = data.user_attr
+    item_attr = data.item_attr
     for i in enumerate(range(20)):
         users, pos, neg = data.sample()
         pprint(users)
