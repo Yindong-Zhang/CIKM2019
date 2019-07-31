@@ -17,16 +17,18 @@ from utility.evaluate import *
 class NGCF(object):
     def __init__(self,
                  adj_list,
-                 user_attr,
-                 item_attr,
+                 user_ids,
+                 item_ids,
+                 global_user_attr,
+                 global_item_attr,
                  data_config,
                  args,
                  pretrain_data):
         """
 
         :param adj_list:
-        :param user_attr:
-        :param item_attr:
+        :param global_user_attr:
+        :param global_item_attr:
         :param data_config:
         :param args:
         :param pretrain_data:
@@ -41,23 +43,23 @@ class NGCF(object):
         self.n_users = data_config['n_users']
         self.n_items = data_config['n_items']
 
-        self.n_fold = 50
+        self.n_train_users = data_config['n_train_users']
+        self.n_train_items = data_config['n_train_items']
 
-        self.adj_list = adj_list # an adj  (clk_adj, cart_adj, collect_adj, buy_adj)
-        self.n_relation = len(self.adj_list)
+        self.n_fold = 50
 
         self.user_attr_names, self.user_attr_sp_names, self.user_attr_ds_names = \
             data_config['user_attr_names'], data_config['user_sp_attr_names'], data_config['user_ds_attr_names']
-        self.user_attr = {}
+        self.global_user_attr = {}
         for attr in data_config['user_sp_attr_names']:
-            self.user_attr[attr] = tf.convert_to_tensor(user_attr[attr], dtype= tf.int32)
+            self.global_user_attr[attr] = tf.convert_to_tensor(global_user_attr[attr], dtype= tf.int32)
         for attr in data_config['user_ds_attr_names']:
-            self.user_attr[attr] = tf.convert_to_tensor(user_attr[attr], dtype= tf.float32)
+            self.global_user_attr[attr] = tf.convert_to_tensor(global_user_attr[attr], dtype= tf.float32)
 
         self.item_attr_names, self.item_attr_sp_names = data_config['item_attr_names'], data_config['item_sp_attr_names']
-        self.item_attr = {}
+        self.global_item_attr = {}
         for attr in data_config['item_attr_names']:
-            self.item_attr[attr] = tf.convert_to_tensor(item_attr[attr], dtype= tf.int32)
+            self.global_item_attr[attr] = tf.convert_to_tensor(global_item_attr[attr], dtype= tf.int32)
 
         self.attr_size = {}
         for attr in data_config['user_attr_names']:
@@ -68,11 +70,11 @@ class NGCF(object):
 
         self.user_attr_dim  = args.user_attr_dim
         self.user_dim = args.user_dim
-        self.user_dim_sum = len(self.user_attr) * self.user_attr_dim + self.user_dim
+        self.user_dim_sum = len(self.global_user_attr) * self.user_attr_dim + self.user_dim
 
         self.item_dim = args.item_dim
         self.item_attr_dim = args.item_attr_dim
-        self.item_dim_sum = self.item_dim + len(self.item_attr) * self.item_attr_dim
+        self.item_dim_sum = self.item_dim + len(self.global_item_attr) * self.item_attr_dim
 
         self.batch_size = args.batch_size
         self.lr = args.lr
@@ -82,17 +84,29 @@ class NGCF(object):
         self.weight_size = args.layer_size
         self.n_layers = len(self.weight_size)
 
+        self.node_dropout_flag = args.node_dropout_flag
+
         self.model_type += '_%s_%s_l%d' % (self.adj_type, self.alg_type, self.n_layers)
 
         self.decay = args.regs
 
-        self.verbose = args.verbose
+        self.n_relation = 4
+        self.A_fold = [self._split_A_hat(adj) for adj in adj_list]
+        self.item_ids = tf.convert_to_tensor(item_ids)
+        self.user_ids = tf.convert_to_tensor(user_ids)
 
+        # extract sample embedding:
+        self.user_attr = {}
+        for attr in self.user_attr_names:
+            self.user_attr[attr] = tf.gather(self.global_user_attr[attr], self.user_ids)
+
+        self.item_attr = {}
+        for attr in self.item_attr_names:
+            self.item_attr[attr] = tf.gather(self.global_item_attr[attr], self.item_ids)
         '''
         *********************************************************
         Create Placeholder for Input Data & Dropout.
         '''
-        # placeholder definition
         self.users =  tf.placeholder(tf.int32, shape=(None, ), name= "users")
         self.pos_items = tf.placeholder(tf.int32, shape=(None,), name= "positve_items")
         self.neg_items = tf.placeholder(tf.int32, shape=(None,), name= "negative_items")
@@ -104,7 +118,6 @@ class NGCF(object):
         #          ... since the usage of node dropout have higher computational cost,
         #          ... please use the 'node_dropout_flag' to indicate whether use such technique.
         #          message dropout (adopted on the convolution operations).
-        self.node_dropout_flag = args.node_dropout_flag
         self.node_dropout = tf.placeholder(tf.float32, shape= (), name= "node_dropout")
         self.mess_dropout = tf.placeholder(tf.float32, shape= (), name= "mess_dropout")
 
@@ -159,7 +172,22 @@ class NGCF(object):
                                                                           self.neg_i_g_embeddings)
         self.loss = self.mf_loss + self.emb_loss + self.reg_loss
 
-        self.opt = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
+        self.opt = tf.train.AdamOptimizer(learning_rate= self.lr).minimize(self.loss)
+
+    def set_support(self, adj_list, user_ids, item_ids):
+        # Generate a set of adjacency sub-matrix.
+        self.A_fold = [self._split_A_hat(adj) for adj in adj_list]
+
+        self.user_ids = tf.convert_to_tensor(user_ids)
+        self.item_ids = tf.convert_to_tensor(item_ids)
+
+        self.user_attr = {}
+        for attr in self.user_attr_names:
+            self.user_attr[attr]= tf.gather(self.global_user_attr[attr], self.user_ids)
+
+        self.item_attr = {}
+        for attr in self.item_attr_names:
+            self.item_attr[attr]= tf.gather(self.global_item_attr[attr], self.item_ids)
 
     def _init_weights(self):
         all_weights = dict()
@@ -216,11 +244,11 @@ class NGCF(object):
     def _split_A_hat(self, X):
         A_fold_hat = []
 
-        fold_len = (self.n_users + self.n_items) // self.n_fold
+        fold_len = (self.n_train_users + self.n_train_items) // self.n_fold
         for i_fold in range(self.n_fold):
             start = i_fold * fold_len
             if i_fold == self.n_fold -1:
-                end = self.n_users + self.n_items
+                end = self.n_train_users + self.n_train_items
             else:
 
                 end = (i_fold + 1) * fold_len
@@ -232,13 +260,13 @@ class NGCF(object):
     def _split_A_hat_node_dropout(self, X):
         A_fold_hat = []
 
-        fold_len = (self.n_users + self.n_items) // self.n_fold
+        fold_len = (self.n_train_users + self.n_train_items) // self.n_fold
         for i_fold in range(self.n_fold):
             start = i_fold * fold_len
 
 
             if i_fold == self.n_fold -1:
-                end = self.n_users + self.n_items
+                end = self.n_train_users + self.n_train_items
             else:
                 end = (i_fold + 1) * fold_len
 
@@ -254,7 +282,7 @@ class NGCF(object):
         for attr in self.user_attr_sp_names:
             user_embedding[attr] = tf.nn.embedding_lookup(self.weights['%s_embedding' %(attr, )], self.user_attr[attr])
         user_embedding['stage'] = tf.matmul(self.user_attr['stage'], self.weights['stage_weight'])
-        user_embedding['unique'] = self.weights['user_embedding']
+        user_embedding['unique'] = tf.nn.embedding_lookup(self.weights['user_embedding'], self.user_ids)
 
         user_embedding_concat = tf.concat([user_embedding[attr] for attr in self.user_attr_names + ('unique', )], axis= -1)
         user_rep = tf.nn.relu(tf.matmul(user_embedding_concat, self.weights['wu_embed']) + self.weights['bu_embed'])
@@ -262,9 +290,9 @@ class NGCF(object):
 
     def _create_item_embedding(self):
         item_embedding = {}
-        item_embedding['price'] = tf.nn.embedding_lookup(self.weights['price_embedding'], self.item_attr['price'])
-        item_embedding['cate1'] = tf.nn.embedding_lookup(self.weights['cate1_embedding'], self.item_attr['cate1'])
-        item_embedding['unique'] = self.weights['item_embedding']
+        for attr in self.item_attr_sp_names:
+            item_embedding[attr] = tf.nn.embedding_lookup(self.weights['%s_embedding' %(attr, )], self.item_attr[attr])
+        item_embedding['unique'] = tf.nn.embedding_lookup(self.weights['item_embedding'], self.item_ids)
         item_embedding_concat = tf.concat([item_embedding['price'], item_embedding['cate1'], item_embedding['unique']], axis= -1)
         item_rep = tf.nn.relu(tf.matmul(item_embedding_concat, self.weights['wi_embed']) + self.weights['bi_embed'])
         return item_rep
@@ -277,15 +305,6 @@ class NGCF(object):
         item_embedding = self._create_item_embedding()
 
         ego_embeddings = tf.concat([user_embedding, item_embedding], axis=0)
-        # Generate a set of adjacency sub-matrix.
-        if self.node_dropout_flag:
-            # node dropout.
-            # return a [[split slices of sparse tensor, ], ]
-            A_fold_hat = [self._split_A_hat_node_dropout(adj) for adj in self.adj_list]
-        else:
-            A_fold_hat = [self._split_A_hat(adj) for adj in self.adj_list]
-
-
 
         all_embeddings = [ego_embeddings]
 
@@ -296,7 +315,7 @@ class NGCF(object):
                 # sum messages of neighbors.
                 temp_embed = []
                 for f in range(self.n_fold):
-                    temp_embed.append(tf.nn.embedding_lookup_sparse(ego_embeddings, *A_fold_hat[r][f], combiner= 'sum'))
+                    temp_embed.append(tf.nn.embedding_lookup_sparse(ego_embeddings, *self.A_fold[r][f], combiner= 'mean'))
 
                 embeddings = tf.concat(temp_embed, 0)
                 side_embeddings.append(embeddings)
@@ -324,11 +343,11 @@ class NGCF(object):
             all_embeddings += [norm_embeddings]
 
         all_embeddings = tf.concat(all_embeddings, 1)
-        u_g_embeddings, i_g_embeddings = tf.split(all_embeddings, [self.n_users, self.n_items], 0)
+        u_g_embeddings, i_g_embeddings = tf.split(all_embeddings, [self.n_train_users, self.n_train_items], 0)
         return u_g_embeddings, i_g_embeddings
 
     def _create_gcn_embed(self):
-        A_fold_hat = self._split_A_hat(self.adj_list)
+        self.A_fold = self._split_A_hat(self.adj_list)
         embeddings = tf.concat([self.weights['user_embedding'], self.weights['item_embedding']], axis=0)
 
 
@@ -337,7 +356,7 @@ class NGCF(object):
         for k in range(0, self.n_layers):
             temp_embed = []
             for f in range(self.n_fold):
-                temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], embeddings))
+                temp_embed.append(tf.sparse_tensor_dense_matmul(self.A_fold[f], embeddings))
 
             embeddings = tf.concat(temp_embed, 0)
             embeddings = tf.nn.leaky_relu(tf.matmul(embeddings, self.weights['W_gc_%d' %k]) + self.weights['b_gc_%d' %k])

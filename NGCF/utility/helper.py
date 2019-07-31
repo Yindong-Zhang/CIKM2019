@@ -72,6 +72,7 @@ def convert_to_ellpack(m):
     loc_array = np.array([rows, cols], dtype= int).transpose()
     inds_array = np.array(inds)
     value_array = np.array(values)
+    print(inds_array.max(), value_array.max())
     sp_inds = tf.SparseTensor(indices= loc_array, values= inds_array, dense_shape=(nrows, max_cols))
     sp_data = tf.SparseTensor(indices= loc_array, values= value_array, dense_shape=(nrows, max_cols))
     return sp_inds, sp_data

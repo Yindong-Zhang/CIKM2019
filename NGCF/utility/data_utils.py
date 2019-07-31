@@ -26,11 +26,18 @@ def split_sparse_tensor(sp_matrix, split_ratio):
 
 
 class Data(object):
-    def __init__(self, path, batch_size, test_ratio= 0.2, val_ratio= 0.1, w_by= 10, w_ct= 3, w_clt= 3, w_clk= 1, seed= 31):
+    def __init__(self, path, batch_size, num_sample_users, num_sample_items,  test_ratio= 0.2, val_ratio= 0.1, adj_type = 'norm', w_by= 10, w_ct= 3, w_clt= 3, w_clk= 1, seed= 31):
         self.path = path
         self.batch_size = batch_size
         self.test_ratio = test_ratio
         self.val_ratio = val_ratio
+
+        # random seed
+        rd.seed(seed)
+        self.rd = np.random.RandomState(seed)
+
+        self.adj_type = adj_type
+
         #get number of users and items
         self.weight_buy = w_by
         self.weight_cart = w_ct
@@ -44,24 +51,39 @@ class Data(object):
         self.adj['clk'] = sp.load_npz(os.path.join(path, "clk_adj.npz"))
         self.adj['sum'] = self.weight_buy *  self.adj['by'] + self.weight_cart * self.adj['ct'] + \
                                 self.weight_collect * self.adj['clt'] + self.weight_click *  self.adj['clk']
-        self.train_adj = {}
-        self.test_adj = {}
-        self.train_adj['by'], self.test_adj['by'] = split_sparse_tensor(self.adj['by'], split_ratio= test_ratio)
-        self.train_adj['ct'], self.test_adj['ct'] = split_sparse_tensor(self.adj['ct'], split_ratio= test_ratio)
-        self.train_adj['clt'], self.test_adj['clt'] = split_sparse_tensor(self.adj['clt'], split_ratio= test_ratio)
-        self.train_adj['clk'], self.test_adj['clk'] = split_sparse_tensor(self.adj['clk'], split_ratio= test_ratio)
-        self.train_adj['sum'] = self.weight_buy *  self.train_adj['by'] + self.weight_cart * self.train_adj['ct'] + \
-                                self.weight_collect * self.train_adj['clt'] + self.weight_click *  self.train_adj['clk']
-        self.test_adj['sum'] = self.weight_buy *  self.test_adj['by'] + self.weight_cart * self.test_adj['ct'] + \
-                                self.weight_collect * self.test_adj['clt'] + self.weight_click *  self.test_adj['clk']
+        self.global_train_adj = {}
+        self.global_test_adj = {}
+        self.global_train_adj['by'], self.global_test_adj['by'] = split_sparse_tensor(self.adj['by'], split_ratio= test_ratio)
+        self.global_train_adj['ct'], self.global_test_adj['ct'] = split_sparse_tensor(self.adj['ct'], split_ratio= test_ratio)
+        self.global_train_adj['clt'], self.global_test_adj['clt'] = split_sparse_tensor(self.adj['clt'], split_ratio= test_ratio)
+        self.global_train_adj['clk'], self.global_test_adj['clk'] = split_sparse_tensor(self.adj['clk'], split_ratio= test_ratio)
+        self.global_train_adj['sum'] = self.weight_buy *  self.global_train_adj['by'] + self.weight_cart * self.global_train_adj['ct'] + \
+                                self.weight_collect * self.global_train_adj['clt'] + self.weight_click *  self.global_train_adj['clk']
+        self.global_test_adj['sum'] = self.weight_buy *  self.global_test_adj['by'] + self.weight_cart * self.global_test_adj['ct'] + \
+                                self.weight_collect * self.global_test_adj['clt'] + self.weight_click *  self.global_test_adj['clk']
 
         self.n_users, self.n_items = self.adj['by'].shape[0], self.adj['by'].shape[1]
-        self.n_train = self.train_adj['sum'].getnnz()
-        self.n_test = self.test_adj['sum'].getnnz()
-        self.print_statistics()
-        test_user_int_count = np.squeeze(np.array(self.test_adj['sum'].sum(1)))
-        self.test_users= np.arange(self.n_users)[test_user_int_count > 0]
+        self.num_sample_users = int(num_sample_users)
+        self.num_sample_items = int(num_sample_items)
+        assert self.num_sample_items < self.n_items, "need to down sample."
+        assert self.num_sample_users < self.n_users, "nedd to down sample"
 
+        # downsample;
+        self.train_users = self.rd.permutation(np.arange(0, self.n_users))[:self.num_sample_users]
+        self.train_items = self.rd.permutation(np.arange(0, self.n_items))[:self.num_sample_items]
+        #
+        self.train_adj = {}
+        for btype in 'clk', 'by', 'ct', 'clt', 'sum':
+            self.train_adj[btype] = self.global_train_adj[btype][self.train_users, :][:, self.train_items]
+        #
+        self.n_train = self.train_adj['sum'].getnnz()
+
+        test_user_int_count = np.squeeze(np.array(self.global_test_adj['sum'].sum(1)))
+        self.test_users= np.arange(self.n_users)[test_user_int_count > 0]
+        self.n_test = self.global_test_adj['sum'].getnnz()
+        self.print_statistics()
+
+        # attributes
         self.user_sp_attr_names = ('age', 'gender', 'career', 'income', 'education')
         self.user_ds_attr_names = ('stage', )
         self.user_attr_names = self.user_ds_attr_names + self.user_sp_attr_names
@@ -90,8 +112,6 @@ class Data(object):
         for attr in self.item_attr_names:
             self.attr_size[attr] = int(np.max(self.item_attr[attr]) + 1)
 
-        rd.seed(seed)
-        self.rd = np.random.RandomState(seed)
 
     def get_adj_mat(self):
         adj_mat = {}
@@ -119,10 +139,10 @@ class Data(object):
 
         except Exception:
             print("create adj matrix...")
-            adj_mat['by'], norm_adj_mat['by'], mean_adj_mat['by'] = self.create_adj_mat(self.adj['by'])
-            adj_mat['ct'], norm_adj_mat['ct'], mean_adj_mat['ct'] = self.create_adj_mat(self.adj['ct'])
-            adj_mat['clt'], norm_adj_mat['clt'], mean_adj_mat['clt'] = self.create_adj_mat(self.adj['clt'])
-            adj_mat['clk'], norm_adj_mat['clk'], mean_adj_mat['clk'] = self.create_adj_mat(self.adj['clk'])
+            adj_mat['by'], norm_adj_mat['by'], mean_adj_mat['by'] = self.create_adj_mat(self.train_adj['by'])
+            adj_mat['ct'], norm_adj_mat['ct'], mean_adj_mat['ct'] = self.create_adj_mat(self.train_adj['ct'])
+            adj_mat['clt'], norm_adj_mat['clt'], mean_adj_mat['clt'] = self.create_adj_mat(self.train_adj['clt'])
+            adj_mat['clk'], norm_adj_mat['clk'], mean_adj_mat['clk'] = self.create_adj_mat(self.train_adj['clk'])
 
             sp.save_npz(os.path.join(self.path, 'by_adj_mat.npz'), adj_mat['by'])
             sp.save_npz(os.path.join(self.path, 'by_norm_adj_mat.npz'), norm_adj_mat['by'])
@@ -142,9 +162,23 @@ class Data(object):
 
         print('already load adj matrix of buy, cart, collect, clk', adj_mat['by'].shape, time() - t1)
 
-        return (adj_mat['by'], adj_mat['ct'], adj_mat['clt'], adj_mat['clk'], ),\
-               (norm_adj_mat['by'], norm_adj_mat['ct'], norm_adj_mat['clt'], norm_adj_mat['clk'], ), \
-               (mean_adj_mat['by'], mean_adj_mat['ct'], mean_adj_mat['clt'], mean_adj_mat['clk'], )
+        if self.adj_type == 'plain':
+            adj_list = adj_mat['by'], adj_mat['ct'], adj_mat['clt'], adj_mat['clk']
+            print('use the plain adjacency matrix')
+
+        elif self.adj_type == 'norm':
+            adj_list = norm_adj_mat['by'], norm_adj_mat['ct'], norm_adj_mat['clt'], norm_adj_mat['clk']
+            print('use the normalized adjacency matrix')
+
+        elif self.adj_type == 'gcmc':
+            adj_list = mean_adj_mat['by'], mean_adj_mat['ct'], mean_adj_mat['clt'], mean_adj_mat['clk'],
+            print('use the gcmc adjacency matrix')
+
+        else:
+            adj_list = [mean_adj_mat[btype] + sp.eye(mean_adj_mat[btype].shape[0]) for btype in ('by', 'ct', 'clt', 'clk')]
+            print('use the mean adjacency matrix')
+
+        return adj_list
 
     def create_adj_mat(self, R):
         t1 = time()
@@ -179,7 +213,8 @@ class Data(object):
         else:
             item_set = set(self.train_adj['sum'][u].nonzero()[1])
             while True:
-                candidate = self.rd.randint(0, self.n_items)  # left  cloes, right open.
+                print('u', u)
+                candidate = self.rd.randint(0, self.num_sample_items)  # left  cloes, right open.
                 if candidate not in item_set:
                     break
         return candidate
@@ -194,16 +229,41 @@ class Data(object):
         neg_item = self.sample_item_for_user(user, neg)
         return pos_item, neg_item
 
+    def shuffle(self):
+        self.train_users = self.rd.permutation(np.arange(0, self.n_users))[:self.num_sample_users]
+        self.train_items = self.rd.permutation(np.arange(0, self.n_items))[:self.num_sample_items]
 
-    def sample(self):
-        users = [self.rd.randint(0, self.n_users) for i in range(self.batch_size)]
-        pairs = (('by', 'ct'), ('by', 'clk'), ('by', None), ('ct', 'clk'), ('ct', None), ('clk', None))
+        for btype in 'clk', 'by', 'ct', 'clt', 'sum':
+            self.train_adj[btype] = self.global_train_adj[btype][self.train_users, :][:, self.train_items]
+
+        self.n_train = self.train_adj['sum'].getnnz()
+        self.print_statistics()
+
+        print("create new adj matrix...")
+        adj_mat = {}
+        norm_adj_mat = {}
+        mean_adj_mat = {}
+        adj_mat['by'], norm_adj_mat['by'], mean_adj_mat['by'] = self.create_adj_mat(self.train_adj['by'])
+        adj_mat['ct'], norm_adj_mat['ct'], mean_adj_mat['ct'] = self.create_adj_mat(self.train_adj['ct'])
+        adj_mat['clt'], norm_adj_mat['clt'], mean_adj_mat['clt'] = self.create_adj_mat(self.train_adj['clt'])
+        adj_mat['clk'], norm_adj_mat['clk'], mean_adj_mat['clk'] = self.create_adj_mat(self.train_adj['clk'])
+
+        for btype in 'by', 'ct', 'clt', 'clk':
+            sp.save_npz(os.path.join(self.path, '%s_adj_mat.npz' %(btype, )), adj_mat[btype])
+            sp.save_npz(os.path.join(self.path, '%s_norm_adj_mat.npz' %(btype, )), norm_adj_mat[btype])
+            sp.save_npz(os.path.join(self.path, '%s_mean_adj_mat.npz' %(btype, )), mean_adj_mat[btype])
+
+    def sample_batch_labels(self):
+        valid_users = np.arange(self.num_sample_users)[np.array(self.train_adj['sum'].sum(1)).reshape(-1, ) > 0]
+        users = [self.rd.choice(valid_users) for _ in range(self.batch_size)]
+        pairs = (('by', 'ct'), ('by', 'clk'), ('by', None), ('ct', 'clk'), ('ct', None), ('clk', None), ('clt', 'clk'), ('clt', None))
 
 
         pos_items, neg_items = [], []
         for i, u in enumerate(users):
             # print(i)
             while True:
+                print('i', i)
                 pos, neg = pair = rd.choice(pairs)
                 if self.train_adj[pos][u].getnnz() and (self.train_adj[neg][u].getnnz() if neg else True):
                     break
@@ -213,8 +273,8 @@ class Data(object):
         return users, pos_items, neg_items
 
     def print_statistics(self):
-        print('n_users=%d, n_items=%d' % (self.n_users, self.n_items))
-        print('n_interactions=%d' % (self.n_train + self.n_test))
+        print('traing user %d out of %d, train_items %d out of %d' % (self.num_sample_users, self.n_users, self.num_sample_items, self.n_items))
+        print('n_interactions= %d for train + %d for test.' % (self.n_train, self.n_test))
         print('n_train=%d, n_test=%d, sparsity=%.5f' % (self.n_train, self.n_test, (self.n_train + self.n_test)/(self.n_users * self.n_items)))
 
 
@@ -299,12 +359,28 @@ class Data(object):
 
 if __name__ == "__main__":
     t0 = time()
-    data = Data("../../Data/CIKM-toy", 1024, 0.2, 0.1, 10, 3, 3, 1, 32)
+    data = Data("../../Data/CIKM-toy",
+                batch_size= 1024,
+                num_sample_users= 10000,
+                num_sample_items= 10000,
+                test_ratio= 0.2,
+                val_ratio= 0.1,
+                w_by= 10,
+                w_ct= 3,
+                w_clt= 3,
+                w_clk= 1,
+                seed= 32)
     data.get_adj_mat()
     user_attr = data.user_attr
     item_attr = data.item_attr
-    for i in enumerate(range(20)):
-        users, pos, neg = data.sample()
+    # for i in enumerate(range(10)):
+    #     users, pos, neg = data.sample_batch_labels()
+    #     pprint(users)
+    #     pprint(pos)
+    #     pprint(neg)
+    data.shuffle()
+    for i in enumerate(range(10)):
+        users, pos, neg = data.sample_batch_labels()
         pprint(users)
         pprint(pos)
         pprint(neg)

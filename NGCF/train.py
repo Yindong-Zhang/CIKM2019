@@ -12,8 +12,9 @@ parser.add_argument('--weights_path', default='', help='Store model path.')
 parser.add_argument('--data_path', default='../Data/', help='Input data path.')
 parser.add_argument('--proj_path', nargs='?', default='', help='Project path.')
 parser.add_argument('--dataset', default='CIKM', help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
+parser.add_argument('--num_sample_users', type= int, default = 1E4, help= 'Number of users to sample in single train')
+parser.add_argument('--num_sample_items', type= int, default= 1E4, help= 'Number of items to sample in single traing.')
 parser.add_argument('--pretrain', type=int, default=0, help='0: No pretrain, -1: Pretrain with the learned embeddings, 1:Pretrain with stored models.')
-parser.add_argument('--verbose', type=int, default=1, help='Interval of evaluation.')
 parser.add_argument('--epoch', type=int, default= 1, help='Number of epoch.')
 parser.add_argument('--layer_size', nargs='+', default=[64, ], help='Output sizes of every layer')
 parser.add_argument('--batch_size', type=int, default= 256, help='Batch size.')
@@ -40,8 +41,11 @@ os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
 
 dataset = Data(path=os.path.join(args.data_path, args.dataset),
                batch_size=args.batch_size,
+               num_sample_users= args.num_sample_users,
+               num_sample_items= args.num_sample_items,
                test_ratio= 0.2,
                val_ratio= 0.1,
+               adj_type= args.adj_type,
                w_by=10,
                w_ct= 3,
                w_clt= 3,
@@ -51,6 +55,8 @@ dataset = Data(path=os.path.join(args.data_path, args.dataset),
 data_config = dict()
 data_config['n_users'] = dataset.n_users
 data_config['n_items'] = dataset.n_items
+data_config['n_train_users'] = dataset.num_sample_users
+data_config['n_train_items'] = dataset.num_sample_items
 data_config['attr_size'] = dataset.attr_size
 data_config['user_attr_names'] = dataset.user_attr_names
 data_config['user_sp_attr_names'] = dataset.user_sp_attr_names
@@ -63,27 +69,10 @@ data_config['item_sp_attr_names'] = dataset.item_sp_attr_names
 *********************************************************
 Generate the Laplacian matrix, where each entry defines the decay factor (e.g., p_ui) between two connected nodes.
 """
-plain_adj, norm_adj, mean_adj = dataset.get_adj_mat()
 
-if args.adj_type == 'plain':
-    adj_list = plain_adj
-    print('use the plain adjacency matrix')
 
-elif args.adj_type == 'norm':
-    adj_list = norm_adj
-    print('use the normalized adjacency matrix')
-
-elif args.adj_type == 'gcmc':
-    adj_list = mean_adj
-    print('use the gcmc adjacency matrix')
-
-else:
-    adj_list = mean_adj + sp.eye(mean_adj.shape[0])
-    print('use the mean adjacency matrix')
 
 t0 = time()
-
-
 def load_pretrained_data():
     pretrain_path = '%spretrain/%s/%s.npz' % (args.proj_path, args.dataset, 'embedding')
     try:
@@ -98,7 +87,8 @@ if args.pretrain == -1:
 else:
     pretrain_data = None
 
-model = NGCF(adj_list, dataset.user_attr, dataset.item_attr, data_config=data_config, args= args, pretrain_data=pretrain_data)
+adj_list = dataset.get_adj_mat()
+model = NGCF(adj_list, dataset.train_users, dataset.train_items, dataset.user_attr, dataset.item_attr, data_config=data_config, args= args, pretrain_data=pretrain_data)
 
 """
 *********************************************************
@@ -200,10 +190,16 @@ for epoch in range(args.epoch):
     print("Epoch %s training ..." %(epoch,))
     t1 = time()
     loss, mf_loss, emb_loss, reg_loss = 0., 0., 0., 0.
+    dataset.shuffle()
+    adj_list = dataset.get_adj_mat()
+    train_users = dataset.train_users
+    train_items = dataset.train_items
+    model.set_support(adj_list, train_users, train_items)
+
     n_batch = 2 * dataset.n_train // args.batch_size + 1 # my choice
 
     for it in range(n_batch):
-        users, pos_items, neg_items = dataset.sample()
+        users, pos_items, neg_items = dataset.sample_batch_labels()
         _, batch_loss, batch_mf_loss, batch_emb_loss, batch_reg_loss = sess.run(
             [model.opt, model.loss, model.mf_loss, model.emb_loss, model.reg_loss],
             feed_dict={model.users: users,
