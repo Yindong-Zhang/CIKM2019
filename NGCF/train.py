@@ -11,13 +11,13 @@ parser = argparse.ArgumentParser(description="Run NGCF.")
 parser.add_argument('--weights_path', default='', help='Store model path.')
 parser.add_argument('--data_path', default='../Data/', help='Input data path.')
 parser.add_argument('--proj_path', nargs='?', default='', help='Project path.')
-parser.add_argument('--dataset', default='CIKM', help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
+parser.add_argument('--dataset', default='CIKM-toy', help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
 parser.add_argument('--num_sample_users', type= int, default = 1E4, help= 'Number of users to sample in single train')
 parser.add_argument('--num_sample_items', type= int, default= 1E4, help= 'Number of items to sample in single traing.')
 parser.add_argument('--pretrain', type=int, default=0, help='0: No pretrain, -1: Pretrain with the learned embeddings, 1:Pretrain with stored models.')
 parser.add_argument('--epoch', type=int, default= 1, help='Number of epoch.')
 parser.add_argument('--layer_size', nargs='+', default=[64, ], help='Output sizes of every layer')
-parser.add_argument('--batch_size', type=int, default= 256, help='Batch size.')
+parser.add_argument('--batch_size', type=int, default= 1024, help='Batch size.')
 parser.add_argument('--regs', type= float,  default= 1e-5, help='Regularizations.')
 parser.add_argument('--lr', type=float, default=0.01, help='Learning rate.')
 parser.add_argument('--model_type', type= str, default='ngcf', help='Specify the name of model (ngcf).')
@@ -32,7 +32,7 @@ parser.add_argument('--user_attr_dim', type= int, default= 16, help= 'embedding 
 parser.add_argument('--item_dim', type= int, default= 32, help= 'dimension of item specific vector')
 parser.add_argument('--item_attr_dim', type= int, default= 32, help = 'embedding dimension for each item attr')
 parser.add_argument('--embed_size', type=int, default=64, help='overall Embedding size for item and users.')
-parser.add_argument('--Ks', nargs='+', default= [50, ], help='kth first in rank performance evaluation.')
+parser.add_argument('--K', type= int,  default= 50, help='kth first in rank performance evaluation.')
 parser.add_argument('--print_every', type= int, default= 10, help= "print every several batches. ")
 parser.add_argument('--save_flag', type=int, default=0, help='0: Disable model saver, 1: Activate model saver')
 parser.add_argument('--report', type=int, default=0, help='0: Disable performance report w.r.t. sparsity levels, 1: Show performance report w.r.t. sparsity levels')
@@ -129,23 +129,20 @@ if args.pretrain == 1:
         if args.report != 1:
             users_to_test = list(dataset.test_set.keys())
             res = evaluate(sess, model, users_to_test, drop_flag=True)
-            cur_best_pre_0 = res['recall'][0]
+            cur_best_pre = res['recall']
 
-            pretrain_ret = 'pretrained model recall=[%.5f, %.5f], precision=[%.5f, %.5f], hit=[%.5f, %.5f],' \
-                           'ndcg=[%.5f, %.5f]' % \
-                           (res['recall'][0], res['recall'][-1],
-                            res['precision'][0], res['precision'][-1],
-                            res['hit_ratio'][0], res['hit_ratio'][-1],
-                            res['ndcg'][0], res['ndcg'][-1])
+            pretrain_ret = 'pretrained model recall= %.5f, precision= %.5f, hit= %.5f,' \
+                           'ndcg= %.5f' % \
+                           (res['recall'], res['precision'], res['hit_ratio'], res['ndcg'])
             print(pretrain_ret)
     else:
         sess.run(tf.global_variables_initializer())
-        cur_best_pre_0 = 0.
+        cur_best_pre = 0.
         print('without pretraining.')
 
 else:
     sess.run(tf.global_variables_initializer())
-    cur_best_pre_0 = 0.
+    cur_best_pre = 0.
     print('without pretraining.')
 
 """
@@ -187,7 +184,7 @@ tolerant_step = 0
 should_stop = False
 
 for epoch in range(args.epoch):
-    print("Epoch %s training ..." %(epoch,))
+    print("Epoch %d / %d training ..." %(epoch, args.epoch))
     t1 = time()
     loss, mf_loss, emb_loss, reg_loss = 0., 0., 0., 0.
     dataset.shuffle()
@@ -214,13 +211,15 @@ for epoch in range(args.epoch):
         reg_loss = (it * reg_loss + batch_reg_loss) / (it + 1)
 
         if it % args.print_every == 0:
-            print("%d: loss %.4f mf loss %.4f emb loss %.4f reg loss %.4f" % (it, loss, mf_loss, emb_loss, reg_loss))
-    print("epoch %d conclude." % (epoch,))
-
+            print("%d / %d: loss %.4f mf loss %.4f emb loss %.4f reg loss %.4f" % (it, n_batch, loss, mf_loss, emb_loss, reg_loss))
     t2 = time()
-    res = evaluate(sess, model, dataset.test_users, dataset, args.batch_size, args.Ks, drop_flag=True, batch_test_flag= False)
+    print("epoch %d train conclude in %d seconds." % (epoch, t2 - t1))
+
+    print("epoch %d evaluating..." %(epoch, ))
+    res = evaluate(sess, model, dataset.test_users, dataset, args.batch_size, args.K, drop_flag=True, batch_test_flag= False)
 
     t3 = time()
+    print("epoch %d evaluate conclude in time %d seconds." %(epoch, t3 - t2))
 
     loss_loger.append(loss)
     rec_loger.append(res['recall'])
@@ -228,19 +227,17 @@ for epoch in range(args.epoch):
     ndcg_loger.append(res['ndcg'])
     hit_loger.append(res['hit_ratio'])
 
-    perf_str = 'Epoch %d [training %.1fs + testing %.1fs]: \n' \
-               'train loss==[%.5f=%.5f + %.5f + %.5f]\n' \
-               'recall=[%.5f, %.5f]\n' \
-               'precision=[%.5f, %.5f]\n' \
-               'hit=[%.5f, %.5f]\n' \
-               'ndcg=[%.5f, %.5f]\n' \
-               %(epoch, t2 - t1, t3 - t2, loss, mf_loss, emb_loss, reg_loss, res['recall'][0], res['recall'][-1],
-                res['precision'][0], res['precision'][-1], res['hit_ratio'][0], res['hit_ratio'][-1],
-                res['ndcg'][0], res['ndcg'][-1])
+    perf_str = 'Epoch %d [training %d s + testing %d s]: \n' \
+               'train loss= [%.5f=%.5f + %.5f + %.5f]\n' \
+               'recall= %.5f\n' \
+               'precision= %.5f\n' \
+               'hit= %.5f\n' \
+               'ndcg= %.5f\n' \
+               %(epoch, t2 - t1, t3 - t2, loss, mf_loss, emb_loss, reg_loss, res['recall'], res['precision'], res['hit_ratio'], res['ndcg'])
     print(perf_str)
 
-    cur_best_pre_0, tolerant_step, should_stop = early_stopping(res['recall'][0], cur_best_pre_0,
-                                                                tolerant_step, expected_order='acc', tolerance=5)
+    cur_best_pre, tolerant_step, should_stop = early_stopping(res['recall'], cur_best_pre,
+                                                              tolerant_step, expected_order='acc', tolerance=5)
 
     # *********************************************************
     # early stopping when cur_best_pre_0 is decreasing for ten successive steps.
@@ -249,7 +246,7 @@ for epoch in range(args.epoch):
 
     # *********************************************************
     # save the user & item embeddings for pretraining.
-    if res['recall'][0] == cur_best_pre_0 and args.save_flag == 1:
+    if res['recall'] == cur_best_pre and args.save_flag == 1:
         save_saver.save(sess, weights_save_path + '/weights', global_step=epoch)
         print('save the weights in path: ', weights_save_path)
 
@@ -258,19 +255,19 @@ pres = np.array(pre_loger)
 ndcgs = np.array(ndcg_loger)
 hit = np.array(hit_loger)
 
-best_rec_0 = np.max(recs[:, 0])
-it = list(recs[:, 0]).index(best_rec_0)
-final_perf = "Best Iter=[%d]@[%.1f]\trecall=[%s], precision=[%s], hit=[%s], ndcg=[%s]" % \
-             (it, time() - t0, '\t'.join(['%.5f' % r for r in recs[it]]),
-              '\t'.join(['%.5f' % r for r in pres[it]]),
-              '\t'.join(['%.5f' % r for r in hit[it]]),
-              '\t'.join(['%.5f' % r for r in ndcgs[it]]))
+best_record = np.max(recs)
+it = np.argmax(recs)
+final_perf = "Best Iter=[%d]@[%.1f]\t recall= %s, precision= %s, hit= %s, ndcg= %s" % \
+             (it, time() - t0,
+              recs[it],
+              pres[it],
+              hit[it],
+              ndcgs[it])
 print(final_perf)
 
 save_path = '%soutput/%s/%s.result' % (args.proj_path, args.dataset, model.model_type)
 ensureDir(save_path)
 with open(save_path, 'a') as f:
-    f.write(
-        'embed_size=%d, lr=%.4f, layer_size=%s, node_dropout=%s, mess_dropout=%s, regs=%s, adj_type=%s\n\t%s\n'
+    f.write('embed_size=%d, lr=%.4f, layer_size=%s, node_dropout=%s, mess_dropout=%s, regs=%s, adj_type=%s\n\t%s\n'
         % (args.embed_size, args.lr, args.layer_size, args.node_dropout, args.mess_dropout, args.regs,
            args.adj_type, final_perf))

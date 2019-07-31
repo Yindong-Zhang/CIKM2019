@@ -6,29 +6,9 @@ Wang Xiang et al. Neural Graph Collaborative Filtering. In SIGIR 2019.
 @author: Xiang Wang (xiangwang@u.nus.edu)
 '''
 import utility.metrics as metrics
-from utility.parser import parse_args
 from utility.data_utils import *
 import multiprocessing
 import heapq
-from pathos.multiprocessing import ProcessingPool as Pool
-num_cores = multiprocessing.cpu_count() // 2
-
-def ranklist_by_heapq_(user_pos_test, test_items, rating, Ks):
-    item_score = {}
-    for i in test_items:
-        item_score[i] = rating[i]
-
-    K_max = max(Ks)
-    K_max_item_score = heapq.nlargest(K_max, item_score, key=item_score.get)
-
-    r = []
-    for i in K_max_item_score:
-        if i in user_pos_test:
-            r.append(1)
-        else:
-            r.append(0)
-    auc = 0.
-    return r, auc
 
 def get_auc(item_score, user_pos_test):
     item_score = sorted(item_score.items(), key=lambda kv: kv[1])
@@ -75,13 +55,13 @@ def get_performance(r, Ks, num_pos):
             'ndcg': np.array(ndcg), 'hit_ratio': np.array(hit_ratio)}
 
 
-def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, batch_test_flag=False):
-    result = {'precision': np.zeros(len(Ks)), 'recall': np.zeros(len(Ks)), 'ndcg': np.zeros(len(Ks)),
-              'hit_ratio': np.zeros(len(Ks))}
+def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, batch_test_flag=False):
+    result = {'precision': 0,
+              'recall': 0,
+              'ndcg': 0,
+              'hit_ratio': 0}
 
-    pool = Pool(num_cores)
-
-    item_num = dataset.n_items
+    item_num = dataset.num_sample_items
 
     u_batch_size = batchsize
     i_batch_size = batchsize
@@ -90,6 +70,33 @@ def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, b
     n_user_batchs = n_test_users // u_batch_size + 1
 
     count = 0
+
+    # TODO:
+    def evaluate_users(users, ratings):
+        # exclude trainin
+        nrows = len(users)
+        train_item_rows, train_item_cols = dataset.train_adj['sum'][users].nonzero()
+        ratings[train_item_rows, train_item_cols] = 0
+
+    #     partition
+        partial_inds = np.argpartition(ratings, item_num - K, axis= -1)[:, -K:]
+        partial_ratings = ratings[np.arange(nrows).reshape(-1, 1), partial_inds]
+        partial_rel = dataset.test_adj_sum[users.reshape(-1, 1), partial_inds].toarray()
+
+
+        inds = np.argsort(partial_ratings, axis= -1)
+        r = partial_rel[np.arange(nrows).reshape(-1, 1), inds]
+        num_pos = dataset.num_test_per_user[users]
+
+        precision = metrics.precision_at_k(r, K)
+        recall = metrics.recall_at_k(r, K, num_pos)
+        ndcg = metrics.ndcg_at_k(r, K)
+        hit_ratio = metrics.hit_at_k(r, K)
+        return {'precision': precision.mean(),
+                'recall': recall.mean(),
+                'ndcg': ndcg.mean(),
+                'hit_ratio': hit_ratio.mean()
+                }
 
     def test_one_user(x):
         # user u's ratings for user u
@@ -100,15 +107,15 @@ def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, b
         all_items = set(range(item_num))
         test_items = list(all_items - set(training_items))
 
-        user_relevancy_vec = dataset.test_adj['sum'][u]
+        user_relevancy_vec = dataset.test_adj_sum[u]
 
-        r = ranklist_by_heapq(rating, test_items, user_relevancy_vec, Ks)
+        r = ranklist_by_heapq(rating, test_items, user_relevancy_vec, K)
 
-        return get_performance(r, Ks, user_relevancy_vec.getnnz())
+        return get_performance(r, K, user_relevancy_vec.getnnz())
 
-    for u_batch_id in range(n_user_batchs):
-        start = u_batch_id * u_batch_size
-        end = (u_batch_id + 1) * u_batch_size
+    for it in range(n_user_batchs):
+        start = it * u_batch_size
+        end = (it + 1) * u_batch_size
 
         user_batch = test_users[start: end]
 
@@ -149,17 +156,19 @@ def evaluate(sess, model, test_users, dataset, batchsize, Ks, drop_flag=False, b
                                                               model.node_dropout: 0,
                                                               model.mess_dropout: 0})
 
-        user_batch_rating_uid = zip(rate_batch, user_batch)
-        batch_result = pool.map(test_one_user, user_batch_rating_uid)
-        count += len(batch_result)
+        # user_batch_rating_uid = zip(rate_batch, user_batch)
+        # batch_result = pool.map(test_one_user, user_batch_rating_uid)
 
-        for res in batch_result:
-            result['precision'] += res['precision']/n_test_users
-            result['recall'] += res['recall']/n_test_users
-            result['ndcg'] += res['ndcg']/n_test_users
-            result['hit_ratio'] += res['hit_ratio']/n_test_users
+        # for res in batch_result:
+        #     result['precision'] += res['precision']/n_test_users
+        #     result['recall'] += res['recall']/n_test_users
+        #     result['ndcg'] += res['ndcg']/n_test_users
+        #     result['hit_ratio'] += res['hit_ratio']/n_test_users
+        tmp = evaluate_users(user_batch, rate_batch)
+        for indicator in 'precision', 'recall', 'ndcg', 'hit_ratio':
+            result[indicator] = (result[indicator] * it + tmp[indicator]) / (it + 1)
 
+        count += len(user_batch)
 
     assert count == n_test_users
-    pool.close()
     return result

@@ -51,6 +51,7 @@ class Data(object):
         self.adj['clk'] = sp.load_npz(os.path.join(path, "clk_adj.npz"))
         self.adj['sum'] = self.weight_buy *  self.adj['by'] + self.weight_cart * self.adj['ct'] + \
                                 self.weight_collect * self.adj['clt'] + self.weight_click *  self.adj['clk']
+
         self.global_train_adj = {}
         self.global_test_adj = {}
         self.global_train_adj['by'], self.global_test_adj['by'] = split_sparse_tensor(self.adj['by'], split_ratio= test_ratio)
@@ -61,6 +62,9 @@ class Data(object):
                                 self.weight_collect * self.global_train_adj['clt'] + self.weight_click *  self.global_train_adj['clk']
         self.global_test_adj['sum'] = self.weight_buy *  self.global_test_adj['by'] + self.weight_cart * self.global_test_adj['ct'] + \
                                 self.weight_collect * self.global_test_adj['clt'] + self.weight_click *  self.global_test_adj['clk']
+
+        self.num_global_train_interation = self.global_train_adj['sum'].getnnz()
+        self.num_global_test_interation = self.global_test_adj['sum'].getnnz()
 
         self.n_users, self.n_items = self.adj['by'].shape[0], self.adj['by'].shape[1]
         self.num_sample_users = int(num_sample_users)
@@ -78,9 +82,13 @@ class Data(object):
         #
         self.n_train = self.train_adj['sum'].getnnz()
 
-        test_user_int_count = np.squeeze(np.array(self.global_test_adj['sum'].sum(1)))
-        self.test_users= np.arange(self.n_users)[test_user_int_count > 0]
-        self.n_test = self.global_test_adj['sum'].getnnz()
+        self.test_adj_sum = self.global_test_adj['sum'][self.train_users, :][:, self.train_items]
+
+        # test_user_int_count = np.squeeze(np.array(self.test_adj_sum.sum(1)))
+        is_int = self.test_adj_sum > 0
+        self.num_test_per_user = np.array(is_int.sum(1)).reshape(-1, )
+        self.test_users= np.arange(self.num_sample_users)[self.num_test_per_user > 0]
+        self.n_test = self.test_adj_sum.getnnz()
         self.print_statistics()
 
         # attributes
@@ -213,7 +221,7 @@ class Data(object):
         else:
             item_set = set(self.train_adj['sum'][u].nonzero()[1])
             while True:
-                print('u', u)
+                # print('u', u)
                 candidate = self.rd.randint(0, self.num_sample_items)  # left  cloes, right open.
                 if candidate not in item_set:
                     break
@@ -237,6 +245,13 @@ class Data(object):
             self.train_adj[btype] = self.global_train_adj[btype][self.train_users, :][:, self.train_items]
 
         self.n_train = self.train_adj['sum'].getnnz()
+
+        self.test_adj_sum = self.global_test_adj['sum'][self.train_users, :][:, self.train_items]
+
+        is_int = self.test_adj_sum > 0
+        self.num_test_per_user = np.array(is_int.sum(1)).reshape(-1, )
+        self.test_users= np.arange(self.num_sample_users)[self.num_test_per_user > 0]
+        self.n_test = self.test_adj_sum.getnnz()
         self.print_statistics()
 
         print("create new adj matrix...")
@@ -263,7 +278,7 @@ class Data(object):
         for i, u in enumerate(users):
             # print(i)
             while True:
-                print('i', i)
+                # print('i', i)
                 pos, neg = pair = rd.choice(pairs)
                 if self.train_adj[pos][u].getnnz() and (self.train_adj[neg][u].getnnz() if neg else True):
                     break
@@ -274,7 +289,8 @@ class Data(object):
 
     def print_statistics(self):
         print('traing user %d out of %d, train_items %d out of %d' % (self.num_sample_users, self.n_users, self.num_sample_items, self.n_items))
-        print('n_interactions= %d for train + %d for test.' % (self.n_train, self.n_test))
+        print('n_interactions= %d out of %d for train + %d out of %d for test.'
+              % (self.n_train, self.num_global_train_interation, self.n_test, self.num_global_test_interation))
         print('n_train=%d, n_test=%d, sparsity=%.5f' % (self.n_train, self.n_test, (self.n_train + self.n_test)/(self.n_users * self.n_items)))
 
 
