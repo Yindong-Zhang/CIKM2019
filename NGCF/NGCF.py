@@ -90,7 +90,7 @@ class NGCF(object):
 
         self.decay = args.regs
 
-        self.n_relation = 4
+        self.n_relation = len(adj_list)
         self.A_fold = [self._split_A_hat(adj) for adj in adj_list]
         self.item_ids = tf.convert_to_tensor(item_ids)
         self.user_ids = tf.convert_to_tensor(user_ids)

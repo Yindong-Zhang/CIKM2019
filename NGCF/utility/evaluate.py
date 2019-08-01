@@ -42,19 +42,6 @@ def ranklist_by_heapq(rating, test_items, test_relevancy_vec, Ks):
     r = [test_relevancy_vec[0, i] for i in K_max_item_inds]
     return r
 
-def get_performance(r, Ks, num_pos):
-    precision, recall, ndcg, hit_ratio = [], [], [], []
-
-    for K in Ks:
-        precision.append(metrics.precision_at_k(r, K))
-        recall.append(metrics.recall_at_k(r, K, num_pos))
-        ndcg.append(metrics.ndcg_at_k(r, K))
-        hit_ratio.append(metrics.hit_at_k(r, K))
-
-    return {'recall': np.array(recall), 'precision': np.array(precision),
-            'ndcg': np.array(ndcg), 'hit_ratio': np.array(hit_ratio)}
-
-
 def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, batch_test_flag=False):
     result = {'precision': 0,
               'recall': 0,
@@ -71,7 +58,6 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
 
     count = 0
 
-    # TODO:
     def evaluate_users(users, ratings):
         # exclude trainin
         nrows = len(users)
@@ -97,21 +83,6 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
                 'ndcg': ndcg.mean(),
                 'hit_ratio': hit_ratio.mean()
                 }
-
-    def test_one_user(x):
-        # user u's ratings for user u
-        rating, u = x
-        # user u's items in the training set
-        training_items = dataset.train_adj['sum'][u].nonzero()[1]
-        # user u's items in the test set
-        all_items = set(range(item_num))
-        test_items = list(all_items - set(training_items))
-
-        user_relevancy_vec = dataset.test_adj_sum[u]
-
-        r = ranklist_by_heapq(rating, test_items, user_relevancy_vec, K)
-
-        return get_performance(r, K, user_relevancy_vec.getnnz())
 
     for it in range(n_user_batchs):
         start = it * u_batch_size
@@ -156,14 +127,6 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
                                                               model.node_dropout: 0,
                                                               model.mess_dropout: 0})
 
-        # user_batch_rating_uid = zip(rate_batch, user_batch)
-        # batch_result = pool.map(test_one_user, user_batch_rating_uid)
-
-        # for res in batch_result:
-        #     result['precision'] += res['precision']/n_test_users
-        #     result['recall'] += res['recall']/n_test_users
-        #     result['ndcg'] += res['ndcg']/n_test_users
-        #     result['hit_ratio'] += res['hit_ratio']/n_test_users
         tmp = evaluate_users(user_batch, rate_batch)
         for indicator in 'precision', 'recall', 'ndcg', 'hit_ratio':
             result[indicator] = (result[indicator] * it + tmp[indicator]) / (it + 1)

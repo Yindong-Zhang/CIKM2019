@@ -4,11 +4,10 @@ from utility.data_utils import *
 from utility.helper import *
 from NGCF import NGCF
 import tensorflow as tf
-import multiprocessing as mp
 from utility.evaluate import  *
 
 parser = argparse.ArgumentParser(description="Run NGCF.")
-parser.add_argument('--weights_path', default='', help='Store model path.')
+parser.add_argument('--weights_path', default='../', help='Store model path.')
 parser.add_argument('--data_path', default='../Data/', help='Input data path.')
 parser.add_argument('--proj_path', nargs='?', default='', help='Project path.')
 parser.add_argument('--dataset', default='CIKM-toy', help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
@@ -16,15 +15,15 @@ parser.add_argument('--num_sample_users', type= int, default = 1E4, help= 'Numbe
 parser.add_argument('--num_sample_items', type= int, default= 1E4, help= 'Number of items to sample in single traing.')
 parser.add_argument('--pretrain', type=int, default=0, help='0: No pretrain, -1: Pretrain with the learned embeddings, 1:Pretrain with stored models.')
 parser.add_argument('--epoch', type=int, default= 1, help='Number of epoch.')
-parser.add_argument('--layer_size', nargs='+', default=[64, ], help='Output sizes of every layer')
+parser.add_argument('--layer_size', nargs='+', type= int, default=[64, ], help='Output sizes of every layer')
 parser.add_argument('--batch_size', type=int, default= 1024, help='Batch size.')
 parser.add_argument('--regs', type= float,  default= 1e-5, help='Regularizations.')
 parser.add_argument('--lr', type=float, default=0.01, help='Learning rate.')
 parser.add_argument('--model_type', type= str, default='ngcf', help='Specify the name of model (ngcf).')
 parser.add_argument('--adj_type', type= str, default='norm', help='Specify the type of the adjacency (laplacian) matrix from {plain, norm, mean}.')
 parser.add_argument('--alg_type', nargs='?', default='ngcf', help='Specify the type of the graph convolutional layer from {ngcf, gcn, gcmc}.')
-parser.add_argument('--gpu_id', type=int, default=0, help='0 for NAIS_prod, 1 for NAIS_concat')
-parser.add_argument('--node_dropout_flag', type=int, default=0, help='0: Disable node dropout, 1: Activate node dropout')
+parser.add_argument('--gpu_id', type=int, default= [0, 1] , help='0 for NAIS_prod, 1 for NAIS_concat')
+parser.add_argument('--node_dropout_flag', type=int, default= 0, help='0: Disable node dropout, 1: Activate node dropout')
 parser.add_argument('--node_dropout', type= float, default= 0.1, help='Keep probability w.r.t. node dropout (i.e., 1-dropout_ratio) for each deep layer. 1: no dropout.')
 parser.add_argument('--mess_dropout', type= float, default= 0.1, help='Keep probability w.r.t. message dropout (i.e., 1-dropout_ratio) for each deep layer. 1: no dropout.')
 parser.add_argument('--user_dim', type= int, default= 32, help = 'dimension of user specific vector')
@@ -34,7 +33,7 @@ parser.add_argument('--item_attr_dim', type= int, default= 32, help = 'embedding
 parser.add_argument('--embed_size', type=int, default=64, help='overall Embedding size for item and users.')
 parser.add_argument('--K', type= int,  default= 50, help='kth first in rank performance evaluation.')
 parser.add_argument('--print_every', type= int, default= 10, help= "print every several batches. ")
-parser.add_argument('--save_flag', type=int, default=0, help='0: Disable model saver, 1: Activate model saver')
+parser.add_argument('--save_flag', type=int, default= 1, help='0: Disable model saver, 1: Activate model saver')
 parser.add_argument('--report', type=int, default=0, help='0: Disable performance report w.r.t. sparsity levels, 1: Show performance report w.r.t. sparsity levels')
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
@@ -46,10 +45,7 @@ dataset = Data(path=os.path.join(args.data_path, args.dataset),
                test_ratio= 0.2,
                val_ratio= 0.1,
                adj_type= args.adj_type,
-               w_by=10,
-               w_ct= 3,
-               w_clt= 3,
-               w_clk= 1,
+               weight= {'by': 10, 'clt': 3, 'clk': 1}
                )
 
 data_config = dict()
@@ -98,8 +94,8 @@ saver = tf.train.Saver()
 
 if args.save_flag == 1:
     layer = '-'.join([str(l) for l in args.layer_size])
-    weights_save_path = '%sweights/%s/%s/%s/l%s_r%s' % (args.weights_path, args.dataset, model.model_type, layer,
-                                                        str(args.lr), '-'.join([str(r) for r in args.regs]))
+    weights_save_path = '%s/weights/%s/%s/%s/l%s_r%s' % (args.weights_path, args.dataset, model.model_type, layer,
+                                                        args.lr, args.regs)
     ensureDir(weights_save_path)
     save_saver = tf.train.Saver(max_to_keep=1)
 
@@ -114,8 +110,8 @@ Reload the pretrained model parameters.
 if args.pretrain == 1:
     layer = '-'.join([str(l) for l in args.layer_size])
 
-    pretrain_path = '%sweights/%s/%s/%s/l%s_r%s' % (args.weights_path, args.dataset, model.model_type, layer,
-                                                    str(args.lr), '-'.join([str(r) for r in args.regs]))
+    pretrain_path = '%s/weights/%s/%s/%s/l%s_r%s' % (args.weights_path, args.dataset, model.model_type, layer,
+                                                    str(args.lr), args.regs)
 
 
     ckpt = tf.train.get_checkpoint_state(os.path.dirname(pretrain_path + '/checkpoint'))
@@ -127,8 +123,8 @@ if args.pretrain == 1:
         # *********************************************************
         # get the performance from pretrained model.
         if args.report != 1:
-            users_to_test = list(dataset.test_set.keys())
-            res = evaluate(sess, model, users_to_test, drop_flag=True)
+            res = evaluate(sess, model, dataset.test_users, dataset, args.batch_size, args.K, drop_flag=True,
+                           batch_test_flag=False)
             cur_best_pre = res['recall']
 
             pretrain_ret = 'pretrained model recall= %.5f, precision= %.5f, hit= %.5f,' \
@@ -184,7 +180,8 @@ tolerant_step = 0
 should_stop = False
 
 for epoch in range(args.epoch):
-    print("Epoch %d / %d training ..." %(epoch, args.epoch))
+    print("Epoch %d / %d: \n" %(epoch, args.epoch))
+    print("Shuffle dataset: \n")
     t1 = time()
     loss, mf_loss, emb_loss, reg_loss = 0., 0., 0., 0.
     dataset.shuffle()
@@ -193,9 +190,10 @@ for epoch in range(args.epoch):
     train_items = dataset.train_items
     model.set_support(adj_list, train_users, train_items)
 
-    n_batch = 2 * dataset.n_train // args.batch_size + 1 # my choice
+    n_batch = dataset.n_train // args.batch_size + 1 # my choice
 
-    for it in range(n_batch):
+    print("Start training...")
+    for it in range(10):
         users, pos_items, neg_items = dataset.sample_batch_labels()
         _, batch_loss, batch_mf_loss, batch_emb_loss, batch_reg_loss = sess.run(
             [model.opt, model.loss, model.mf_loss, model.emb_loss, model.reg_loss],
