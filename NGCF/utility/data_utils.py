@@ -12,6 +12,7 @@ from sklearn.model_selection import train_test_split
 from time import time
 import os
 from pprint import pprint
+from pathos.multiprocessing import ProcessingPool as Pool
 
 
 
@@ -52,6 +53,7 @@ class Data(object):
 
         self.adj = {}
         self.btype_list = ['by', 'clt', 'clk']
+        self.pair= (('by', 'clt'), ('by', 'clk'), ('by', None), ('clk', None), ('clt', 'clk'), ('clt', None))
         self.adj['by'] = sp.load_npz(os.path.join(path, "buy_adj.npz"))
         self.adj['clt'] = sp.load_npz(os.path.join(path, "clt_adj.npz"))
         self.adj['clk'] = sp.load_npz(os.path.join(path, "clk_adj.npz"))
@@ -205,16 +207,6 @@ class Data(object):
                     break
         return candidate
 
-    def sample_pair(self, user):
-        pairs = (('by', 'ct'), ('by', 'clk'), ('by', None), ('ct', 'clk'), ('ct', None), ('clk', None))
-        while True:
-            pos, neg = pair = rd.choice(pairs)
-            if self.train_adj[pos][user].getnnz() and (self.train_adj[neg][user].getnnz() if neg else True):
-                break
-        pos_item = self.sample_item_for_user(user, pos)
-        neg_item = self.sample_item_for_user(user, neg)
-        return pos_item, neg_item
-
     def shuffle(self):
         self.train_users = self.rd.permutation(np.arange(0, self.n_users))[:self.num_sample_users]
         self.train_items = self.rd.permutation(np.arange(0, self.n_items))[:self.num_sample_items]
@@ -244,18 +236,25 @@ class Data(object):
             sp.save_npz(os.path.join(self.path, '%s_norm_adj_mat.npz' %(btype, )), norm_adj_mat[btype])
             sp.save_npz(os.path.join(self.path, '%s_mean_adj_mat.npz' %(btype, )), mean_adj_mat[btype])
 
+    def sample_pair(self, user):
+        while True:
+            pos, neg = pair = rd.choice(self.pairs)
+            if self.train_adj[pos][user].getnnz() and (self.train_adj[neg][user].getnnz() if neg else True):
+                break
+        pos_item = self.sample_item_for_user(user, pos)
+        neg_item = self.sample_item_for_user(user, neg)
+        return pos_item, neg_item
+
     def sample_batch_labels(self):
         valid_users = np.arange(self.num_sample_users)[np.array(self.train_adj['sum'].sum(1)).reshape(-1, ) > 0]
         users = [self.rd.choice(valid_users) for _ in range(self.batch_size)]
-        pairs = (('by', 'clt'), ('by', 'clk'), ('by', None), ('clk', None), ('clt', 'clk'), ('clt', None))
-
 
         pos_items, neg_items = [], []
         for i, u in enumerate(users):
             # print(i)
             while True:
                 # print('i', i)
-                pos, neg = pair = rd.choice(pairs)
+                pos, neg = pair = rd.choice(self.pairs)
                 if self.train_adj[pos][u].getnnz() and (self.train_adj[neg][u].getnnz() if neg else True):
                     break
             pos_items.append(self.sample_item_for_user(u, pos))
@@ -268,85 +267,6 @@ class Data(object):
         print('n_interactions= %d out of %d for train + %d out of %d for test.'
               % (self.n_train, self.num_global_train_interation, self.n_test, self.num_global_test_interation))
         print('n_train=%d, n_test=%d, sparsity=%.5f' % (self.n_train, self.n_test, (self.n_train + self.n_test)/(self.n_users * self.n_items)))
-
-
-    # TODO:
-    def get_sparsity_split(self):
-        try:
-            split_uids, split_state = [], []
-            lines = open(self.path + '/sparsity.split', 'r').readlines()
-
-            for idx, line in enumerate(lines):
-                if idx % 2 == 0:
-                    split_state.append(line.strip())
-                    print(line.strip())
-                else:
-                    split_uids.append([int(uid) for uid in line.strip().split(' ')])
-            print('get sparsity split.')
-
-        except Exception:
-            split_uids, split_state = self.create_sparsity_split()
-            f = open(self.path + '/sparsity.split', 'w')
-            for idx in range(len(split_state)):
-                f.write(split_state[idx] + '\n')
-                f.write(' '.join([str(uid) for uid in split_uids[idx]]) + '\n')
-            print('create sparsity split.')
-
-        return split_uids, split_state
-
-
-
-    def create_sparsity_split(self):
-        all_users_to_test = list(self.test_set.keys())
-        user_n_iid = dict()
-
-        # generate a dictionary to store (key=n_iids, value=a list of uid).
-        for uid in all_users_to_test:
-            train_iids = self.train_items[uid]
-            test_iids = self.test_set[uid]
-
-            n_iids = len(train_iids) + len(test_iids)
-
-            if n_iids not in user_n_iid.keys():
-                user_n_iid[n_iids] = [uid]
-            else:
-                user_n_iid[n_iids].append(uid)
-        split_uids = list()
-
-        # split the whole user set into four subset.
-        temp = []
-        count = 1
-        fold = 4
-        n_count = (self.n_train + self.n_test)
-        n_rates = 0
-
-        split_state = []
-        for idx, n_iids in enumerate(sorted(user_n_iid)):
-            temp += user_n_iid[n_iids]
-            n_rates += n_iids * len(user_n_iid[n_iids])
-            n_count -= n_iids * len(user_n_iid[n_iids])
-
-            if n_rates >= count * 0.25 * (self.n_train + self.n_test):
-                split_uids.append(temp)
-
-                state = '#inter per user<=[%d], #users=[%d], #all rates=[%d]' %(n_iids, len(temp), n_rates)
-                split_state.append(state)
-                print(state)
-
-                temp = []
-                n_rates = 0
-                fold -= 1
-
-            if idx == len(user_n_iid.keys()) - 1 or n_count == 0:
-                split_uids.append(temp)
-
-                state = '#inter per user<=[%d], #users=[%d], #all rates=[%d]' % (n_iids, len(temp), n_rates)
-                split_state.append(state)
-                print(state)
-
-
-
-        return split_uids, split_state
 
 
 if __name__ == "__main__":

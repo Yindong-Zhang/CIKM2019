@@ -36,7 +36,9 @@ parser.add_argument('--print_every', type= int, default= 10, help= "print every 
 parser.add_argument('--save_flag', type=int, default= 1, help='0: Disable model saver, 1: Activate model saver')
 parser.add_argument('--report', type=int, default=0, help='0: Disable performance report w.r.t. sparsity levels, 1: Show performance report w.r.t. sparsity levels')
 args = parser.parse_args()
-os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
+print(args)
+
+os.environ["CUDA_VISIBLE_DEVICES"] = '0,1'
 
 dataset = Data(path=os.path.join(args.data_path, args.dataset),
                batch_size=args.batch_size,
@@ -193,7 +195,7 @@ for epoch in range(args.epoch):
     n_batch = dataset.n_train // args.batch_size + 1 # my choice
 
     print("Start training...")
-    for it in range(10):
+    for it in range(n_batch):
         users, pos_items, neg_items = dataset.sample_batch_labels()
         _, batch_loss, batch_mf_loss, batch_emb_loss, batch_reg_loss = sess.run(
             [model.opt, model.loss, model.mf_loss, model.emb_loss, model.reg_loss],
