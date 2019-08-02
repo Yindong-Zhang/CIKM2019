@@ -13,7 +13,6 @@ from time import time
 import os
 from pprint import pprint
 from itertools import chain
-# from pathos.multiprocessing import ProcessingPool as Pool
 
 
 
@@ -31,8 +30,6 @@ class Data(object):
     def __init__(self,
                  path,
                  batch_size,
-                 num_sample_users,
-                 num_sample_items,
                  test_ratio= 0.2,
                  val_ratio= 0.1,
                  adj_type = 'norm',
@@ -60,43 +57,27 @@ class Data(object):
         self.adj['clk'] = sp.load_npz(os.path.join(path, "clk_adj.npz"))
         self.adj['sum'] = self.weight['by'] *  self.adj['by'] + self.weight['clt'] * self.adj['clt'] + self.weight['clk'] *  self.adj['clk']
 
-        self.global_train_adj = {}
-        self.global_test_adj = {}
+        self.train_adj = {}
+        self.test_adj = {}
         for btype in self.btype_list:
-            self.global_train_adj[btype], self.global_test_adj[btype] = split_sparse_tensor(self.adj[btype], split_ratio= test_ratio)
+            self.train_adj[btype], self.test_adj[btype] = split_sparse_tensor(self.adj[btype], split_ratio=test_ratio)
 
-        self.global_train_adj['sum'] = self.weight['by'] *  self.global_train_adj['by'] + self.weight['clt'] * self.global_train_adj['clt'] + self.weight['clk'] *  self.global_train_adj['clk']
-        self.global_test_adj['sum'] = self.weight['by'] *  self.global_test_adj['by'] + self.weight['clt'] * self.global_test_adj['clt'] + self.weight['clk'] *  self.global_test_adj['clk']
-
-        self.num_global_train_interation = self.global_train_adj['sum'].getnnz()
-        self.num_global_test_interation = self.global_test_adj['sum'].getnnz()
+        self.train_adj['sum'] = self.weight['by'] * self.train_adj['by'] + self.weight['clt'] * self.train_adj['clt'] + \
+                                self.weight['clk'] * self.train_adj['clk']
+        self.test_adj['sum'] = self.weight['by'] * self.test_adj['by'] + self.weight['clt'] * self.test_adj['clt'] + \
+                               self.weight['clk'] * self.test_adj['clk']
+        self.n_train = self.train_adj['sum'].getnnz()
+        self.n_test = self.test_adj['sum'].getnnz()
 
         self.n_users, self.n_items = self.adj['by'].shape[0], self.adj['by'].shape[1]
-        self.num_sample_users = int(num_sample_users)
-        self.num_sample_items = int(num_sample_items)
-        assert self.num_sample_items < self.n_items, "need to down sample."
-        assert self.num_sample_users < self.n_users, "nedd to down sample"
-
-        # downsample;
-        self.train_users = self.rd.permutation(np.arange(0, self.n_users))[:self.num_sample_users]
-        self.train_items = self.rd.permutation(np.arange(0, self.n_items))[:self.num_sample_items]
-        #
-        self.train_adj = {}
-        for btype in self.btype_list + ['sum', ]:
-            self.train_adj[btype] = self.global_train_adj[btype][self.train_users, :][:, self.train_items]
-        #
-        self.n_train = self.train_adj['sum'].getnnz()
-
-        self.test_adj_sum = self.global_test_adj['sum'][self.train_users, :][:, self.train_items]
 
         self.train_items_count = {btype: np.array(self.train_adj[btype].sum(1)).reshape(-1, ).tolist() for btype in self.btype_list}
         self.train_items_per_user = {btype: self.train_adj[btype].tolil().data.tolist() for btype in self.btype_list}
-        self.valid_users = np.arange(self.num_sample_users)[np.array(self.train_adj['sum'].sum(1) > 0).reshape(-1, )]
+        self.valid_users = np.arange(self.n_users)[np.array(self.train_adj['sum'].sum(1) > 0).reshape(-1, )]
 
-        is_int = self.test_adj_sum > 0
+        is_int = self.test_adj['sum'] > 0
         self.num_test_per_user = np.array(is_int.sum(1)).reshape(-1, )
-        self.test_users= np.arange(self.num_sample_users)[self.num_test_per_user > 0]
-        self.n_test = self.test_adj_sum.getnnz()
+        self.test_users= np.arange(self.n_users)[self.num_test_per_user > 0]
         self.print_statistics()
 
         # attributes
@@ -135,11 +116,11 @@ class Data(object):
         mean_adj_mat = {}
         t1 = time()
         try:
-            print("reload adj matrix...")
             for btype in self.btype_list:
                 adj_mat[btype] = sp.load_npz(os.path.join(self.path, '%s_adj_mat.npz' %(btype, )))
                 norm_adj_mat[btype] = sp.load_npz(os.path.join(self.path, '%s_norm_adj_mat.npz' %(btype, )))
                 mean_adj_mat[btype] = sp.load_npz(os.path.join(self.path, '%s_mean_adj_mat.npz' %(btype, )))
+            print("reload adj matrix...")
 
         except Exception:
             print("create adj matrix...")
@@ -198,36 +179,6 @@ class Data(object):
         print('already normalize adjacency matrix', time() - t2)
         return adj_mat.tocsr(), norm_adj_mat.tocsr(), mean_adj_mat.tocsr()
 
-
-    def shuffle(self):
-        self.train_users = self.rd.permutation(np.arange(0, self.n_users))[:self.num_sample_users]
-        self.train_items = self.rd.permutation(np.arange(0, self.n_items))[:self.num_sample_items]
-
-        for btype in self.btype_list + ['sum', ]:
-            self.train_adj[btype] = self.global_train_adj[btype][self.train_users, :][:, self.train_items]
-
-        self.n_train = self.train_adj['sum'].getnnz()
-
-        self.test_adj_sum = self.global_test_adj['sum'][self.train_users, :][:, self.train_items]
-
-        is_int = self.test_adj_sum > 0
-        self.num_test_per_user = np.array(is_int.sum(1)).reshape(-1, )
-        self.test_users= np.arange(self.num_sample_users)[self.num_test_per_user > 0]
-        self.n_test = self.test_adj_sum.getnnz()
-        self.print_statistics()
-
-        print("create new adj matrix...")
-        adj_mat = {}
-        norm_adj_mat = {}
-        mean_adj_mat = {}
-        for btype in self.btype_list:
-            adj_mat[btype], norm_adj_mat[btype], mean_adj_mat[btype] = self.create_adj_mat(self.train_adj[btype])
-
-        for btype in self.btype_list:
-            sp.save_npz(os.path.join(self.path, '%s_adj_mat.npz' %(btype, )), adj_mat[btype])
-            sp.save_npz(os.path.join(self.path, '%s_norm_adj_mat.npz' %(btype, )), norm_adj_mat[btype])
-            sp.save_npz(os.path.join(self.path, '%s_mean_adj_mat.npz' %(btype, )), mean_adj_mat[btype])
-
     def sample_item_for_user(self, u, btype):
         if btype:
             item_array = self.train_items_per_user[btype][u]
@@ -236,7 +187,7 @@ class Data(object):
             item_set = set(chain(*[self.train_items_per_user[btype][u] for btype in self.btype_list]))
             while True:
                 # print('u', u)
-                candidate = self.rd.randint(0, self.num_sample_items)  # left  cloes, right open.
+                candidate = self.rd.randint(0, self.n_items)  # left  cloes, right open.
                 if candidate not in item_set:
                     break
         return candidate
@@ -256,18 +207,15 @@ class Data(object):
         return users, pos_items, neg_items
 
     def print_statistics(self):
-        print('traing user %d out of %d, train_items %d out of %d' % (self.num_sample_users, self.n_users, self.num_sample_items, self.n_items))
-        print('n_interactions= %d out of %d for train + %d out of %d for test.'
-              % (self.n_train, self.num_global_train_interation, self.n_test, self.num_global_test_interation))
-        print('n_train=%d, n_test=%d, sparsity=%.5f' % (self.n_train, self.n_test, (self.n_train + self.n_test)/(self.n_users * self.n_items)))
+        print('traing user %d, train_items %d.' % (self.n_users, self.n_items))
+        print('n_interactions= %d for train + %d for test.' % (self.n_train, self.n_test))
+        print('n_train=%d, n_test=%d, sparsity=%.5f' % (self.n_train, self.n_test, (self.n_train + self.n_test) / (self.n_users * self.n_items)))
 
 
 if __name__ == "__main__":
     t0 = time()
     data = Data("../../Data/CIKM-toy",
                 batch_size= 105376,
-                num_sample_users= 10000,
-                num_sample_items= 10000,
                 test_ratio= 0.2,
                 val_ratio= 0.1,
                 seed= 32)
@@ -279,7 +227,6 @@ if __name__ == "__main__":
     #     pprint(users)
     #     pprint(pos)
     #     pprint(neg)
-    data.shuffle()
     t_list = []
     for i in enumerate(range(10)):
         t0 = time()

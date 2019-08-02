@@ -17,18 +17,16 @@ from utility.evaluate import *
 class NGCF(object):
     def __init__(self,
                  adj_list,
-                 user_ids,
-                 item_ids,
-                 global_user_attr,
-                 global_item_attr,
+                 user_attr,
+                 item_attr,
                  data_config,
                  args,
                  pretrain_data):
         """
 
         :param adj_list:
-        :param global_user_attr:
-        :param global_item_attr:
+        :param user_attr:
+        :param item_attr:
         :param data_config:
         :param args:
         :param pretrain_data:
@@ -43,23 +41,20 @@ class NGCF(object):
         self.n_users = data_config['n_users']
         self.n_items = data_config['n_items']
 
-        self.n_train_users = data_config['n_train_users']
-        self.n_train_items = data_config['n_train_items']
-
         self.n_fold = 50
 
         self.user_attr_names, self.user_attr_sp_names, self.user_attr_ds_names = \
             data_config['user_attr_names'], data_config['user_sp_attr_names'], data_config['user_ds_attr_names']
-        self.global_user_attr = {}
+        self.user_attr = {}
         for attr in data_config['user_sp_attr_names']:
-            self.global_user_attr[attr] = tf.convert_to_tensor(global_user_attr[attr], dtype= tf.int32)
+            self.user_attr[attr] = tf.convert_to_tensor(user_attr[attr], dtype= tf.int32)
         for attr in data_config['user_ds_attr_names']:
-            self.global_user_attr[attr] = tf.convert_to_tensor(global_user_attr[attr], dtype= tf.float32)
+            self.user_attr[attr] = tf.convert_to_tensor(user_attr[attr], dtype= tf.float32)
 
         self.item_attr_names, self.item_attr_sp_names = data_config['item_attr_names'], data_config['item_sp_attr_names']
-        self.global_item_attr = {}
+        self.item_attr = {}
         for attr in data_config['item_attr_names']:
-            self.global_item_attr[attr] = tf.convert_to_tensor(global_item_attr[attr], dtype= tf.int32)
+            self.item_attr[attr] = tf.convert_to_tensor(item_attr[attr], dtype= tf.int32)
 
         self.attr_size = {}
         for attr in data_config['user_attr_names']:
@@ -70,11 +65,11 @@ class NGCF(object):
 
         self.user_attr_dim  = args.user_attr_dim
         self.user_dim = args.user_dim
-        self.user_dim_sum = len(self.global_user_attr) * self.user_attr_dim + self.user_dim
+        self.user_dim_sum = len(self.user_attr) * self.user_attr_dim + self.user_dim
 
         self.item_dim = args.item_dim
         self.item_attr_dim = args.item_attr_dim
-        self.item_dim_sum = self.item_dim + len(self.global_item_attr) * self.item_attr_dim
+        self.item_dim_sum = self.item_dim + len(self.item_attr) * self.item_attr_dim
 
         self.batch_size = args.batch_size
         self.lr = args.lr
@@ -92,17 +87,8 @@ class NGCF(object):
 
         self.n_relation = len(adj_list)
         self.A_fold = [self._split_A_hat(adj) for adj in adj_list]
-        self.item_ids = tf.convert_to_tensor(item_ids)
-        self.user_ids = tf.convert_to_tensor(user_ids)
 
-        # extract sample embedding:
-        self.user_attr = {}
-        for attr in self.user_attr_names:
-            self.user_attr[attr] = tf.gather(self.global_user_attr[attr], self.user_ids)
 
-        self.item_attr = {}
-        for attr in self.item_attr_names:
-            self.item_attr[attr] = tf.gather(self.global_item_attr[attr], self.item_ids)
         '''
         *********************************************************
         Create Placeholder for Input Data & Dropout.
@@ -167,27 +153,12 @@ class NGCF(object):
         *********************************************************
         Generate Predictions & Optimize via BPR loss.
         """
-        self.mf_loss, self.emb_loss, self.reg_loss = self.create_bpr_loss(self.u_g_embeddings,
-                                                                          self.pos_i_g_embeddings,
-                                                                          self.neg_i_g_embeddings)
+        self.mf_loss, self.emb_loss, self.reg_loss = self._create_bpr_loss(self.u_g_embeddings,
+                                                                           self.pos_i_g_embeddings,
+                                                                           self.neg_i_g_embeddings)
         self.loss = self.mf_loss + self.emb_loss + self.reg_loss
 
         self.opt = tf.train.AdamOptimizer(learning_rate= self.lr).minimize(self.loss)
-
-    def set_support(self, adj_list, user_ids, item_ids):
-        # Generate a set of adjacency sub-matrix.
-        self.A_fold = [self._split_A_hat(adj) for adj in adj_list]
-
-        self.user_ids = tf.convert_to_tensor(user_ids)
-        self.item_ids = tf.convert_to_tensor(item_ids)
-
-        self.user_attr = {}
-        for attr in self.user_attr_names:
-            self.user_attr[attr]= tf.gather(self.global_user_attr[attr], self.user_ids)
-
-        self.item_attr = {}
-        for attr in self.item_attr_names:
-            self.item_attr[attr]= tf.gather(self.global_item_attr[attr], self.item_ids)
 
     def _init_weights(self):
         all_weights = dict()
@@ -244,11 +215,11 @@ class NGCF(object):
     def _split_A_hat(self, X):
         A_fold_hat = []
 
-        fold_len = (self.n_train_users + self.n_train_items) // self.n_fold
+        fold_len = (self.n_users + self.n_items) // self.n_fold
         for i_fold in range(self.n_fold):
             start = i_fold * fold_len
             if i_fold == self.n_fold -1:
-                end = self.n_train_users + self.n_train_items
+                end = self.n_users + self.n_items
             else:
 
                 end = (i_fold + 1) * fold_len
@@ -282,7 +253,7 @@ class NGCF(object):
         for attr in self.user_attr_sp_names:
             user_embedding[attr] = tf.nn.embedding_lookup(self.weights['%s_embedding' %(attr, )], self.user_attr[attr])
         user_embedding['stage'] = tf.matmul(self.user_attr['stage'], self.weights['stage_weight'])
-        user_embedding['unique'] = tf.nn.embedding_lookup(self.weights['user_embedding'], self.user_ids)
+        user_embedding['unique'] = self.weights['user_embedding']
 
         user_embedding_concat = tf.concat([user_embedding[attr] for attr in self.user_attr_names + ('unique', )], axis= -1)
         user_rep = tf.nn.relu(tf.matmul(user_embedding_concat, self.weights['wu_embed']) + self.weights['bu_embed'])
@@ -292,7 +263,7 @@ class NGCF(object):
         item_embedding = {}
         for attr in self.item_attr_sp_names:
             item_embedding[attr] = tf.nn.embedding_lookup(self.weights['%s_embedding' %(attr, )], self.item_attr[attr])
-        item_embedding['unique'] = tf.nn.embedding_lookup(self.weights['item_embedding'], self.item_ids)
+        item_embedding['unique'] = self.weights['item_embedding']
         item_embedding_concat = tf.concat([item_embedding['price'], item_embedding['cate1'], item_embedding['unique']], axis= -1)
         item_rep = tf.nn.relu(tf.matmul(item_embedding_concat, self.weights['wi_embed']) + self.weights['bi_embed'])
         return item_rep
@@ -343,7 +314,7 @@ class NGCF(object):
             all_embeddings += [norm_embeddings]
 
         all_embeddings = tf.concat(all_embeddings, 1)
-        u_g_embeddings, i_g_embeddings = tf.split(all_embeddings, [self.n_train_users, self.n_train_items], 0)
+        u_g_embeddings, i_g_embeddings = tf.split(all_embeddings, [self.n_users, self.n_items], 0)
         return u_g_embeddings, i_g_embeddings
 
     def _create_gcn_embed(self):
@@ -400,7 +371,7 @@ class NGCF(object):
         return u_g_embeddings, i_g_embeddings
 
 
-    def create_bpr_loss(self, users, pos_items, neg_items):
+    def _create_bpr_loss(self, users, pos_items, neg_items):
         pos_scores = tf.reduce_sum(tf.multiply(users, pos_items), axis=1)
         neg_scores = tf.reduce_sum(tf.multiply(users, neg_items), axis=1)
 
@@ -435,7 +406,6 @@ class NGCF(object):
         pre_out = tf.sparse_retain(X, dropout_mask)
 
         return pre_out * tf.div(1., keep_prob)
-
 
 
 
