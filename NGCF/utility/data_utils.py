@@ -12,7 +12,8 @@ from sklearn.model_selection import train_test_split
 from time import time
 import os
 from pprint import pprint
-from pathos.multiprocessing import ProcessingPool as Pool
+from itertools import chain
+# from pathos.multiprocessing import ProcessingPool as Pool
 
 
 
@@ -53,7 +54,7 @@ class Data(object):
 
         self.adj = {}
         self.btype_list = ['by', 'clt', 'clk']
-        self.pair= (('by', 'clt'), ('by', 'clk'), ('by', None), ('clk', None), ('clt', 'clk'), ('clt', None))
+        self.pairs= (('by', 'clt'), ('by', 'clk'), ('by', None), ('clk', None), ('clt', 'clk'), ('clt', None))
         self.adj['by'] = sp.load_npz(os.path.join(path, "buy_adj.npz"))
         self.adj['clt'] = sp.load_npz(os.path.join(path, "clt_adj.npz"))
         self.adj['clk'] = sp.load_npz(os.path.join(path, "clk_adj.npz"))
@@ -88,7 +89,10 @@ class Data(object):
 
         self.test_adj_sum = self.global_test_adj['sum'][self.train_users, :][:, self.train_items]
 
-        # test_user_int_count = np.squeeze(np.array(self.test_adj_sum.sum(1)))
+        self.train_items_count = {btype: np.array(self.train_adj[btype].sum(1)).reshape(-1, ).tolist() for btype in self.btype_list}
+        self.train_items_per_user = {btype: self.train_adj[btype].tolil().data.tolist() for btype in self.btype_list}
+        self.valid_users = np.arange(self.num_sample_users)[np.array(self.train_adj['sum'].sum(1) > 0).reshape(-1, )]
+
         is_int = self.test_adj_sum > 0
         self.num_test_per_user = np.array(is_int.sum(1)).reshape(-1, )
         self.test_users= np.arange(self.num_sample_users)[self.num_test_per_user > 0]
@@ -194,18 +198,6 @@ class Data(object):
         print('already normalize adjacency matrix', time() - t2)
         return adj_mat.tocsr(), norm_adj_mat.tocsr(), mean_adj_mat.tocsr()
 
-    def sample_item_for_user(self, u, btype):
-        if btype:
-            item_array = self.train_adj[btype][u].nonzero()[1]
-            candidate = self.rd.choice(item_array)
-        else:
-            item_set = set(self.train_adj['sum'][u].nonzero()[1])
-            while True:
-                # print('u', u)
-                candidate = self.rd.randint(0, self.num_sample_items)  # left  cloes, right open.
-                if candidate not in item_set:
-                    break
-        return candidate
 
     def shuffle(self):
         self.train_users = self.rd.permutation(np.arange(0, self.n_users))[:self.num_sample_users]
@@ -236,29 +228,30 @@ class Data(object):
             sp.save_npz(os.path.join(self.path, '%s_norm_adj_mat.npz' %(btype, )), norm_adj_mat[btype])
             sp.save_npz(os.path.join(self.path, '%s_mean_adj_mat.npz' %(btype, )), mean_adj_mat[btype])
 
-    def sample_pair(self, user):
-        while True:
-            pos, neg = pair = rd.choice(self.pairs)
-            if self.train_adj[pos][user].getnnz() and (self.train_adj[neg][user].getnnz() if neg else True):
-                break
-        pos_item = self.sample_item_for_user(user, pos)
-        neg_item = self.sample_item_for_user(user, neg)
-        return pos_item, neg_item
+    def sample_item_for_user(self, u, btype):
+        if btype:
+            item_array = self.train_items_per_user[btype][u]
+            candidate = self.rd.choice(item_array)
+        else:
+            item_set = set(chain(*[self.train_items_per_user[btype][u] for btype in self.btype_list]))
+            while True:
+                # print('u', u)
+                candidate = self.rd.randint(0, self.num_sample_items)  # left  cloes, right open.
+                if candidate not in item_set:
+                    break
+        return candidate
 
     def sample_batch_labels(self):
-        valid_users = np.arange(self.num_sample_users)[np.array(self.train_adj['sum'].sum(1)).reshape(-1, ) > 0]
-        users = [self.rd.choice(valid_users) for _ in range(self.batch_size)]
+        users = [self.rd.choice(self.valid_users) for _ in range(self.batch_size)]
 
         pos_items, neg_items = [], []
-        for i, u in enumerate(users):
-            # print(i)
+        for user in users:
             while True:
-                # print('i', i)
                 pos, neg = pair = rd.choice(self.pairs)
-                if self.train_adj[pos][u].getnnz() and (self.train_adj[neg][u].getnnz() if neg else True):
+                if self.train_items_count[pos][user] and (self.train_items_count[neg][user] if neg else True):
                     break
-            pos_items.append(self.sample_item_for_user(u, pos))
-            neg_items.append(self.sample_item_for_user(u, neg))
+            pos_items.append(self.sample_item_for_user(user, pos))
+            neg_items.append(self.sample_item_for_user(user, neg))
 
         return users, pos_items, neg_items
 
@@ -272,7 +265,7 @@ class Data(object):
 if __name__ == "__main__":
     t0 = time()
     data = Data("../../Data/CIKM-toy",
-                batch_size= 1024,
+                batch_size= 105376,
                 num_sample_users= 10000,
                 num_sample_items= 10000,
                 test_ratio= 0.2,
@@ -287,9 +280,12 @@ if __name__ == "__main__":
     #     pprint(pos)
     #     pprint(neg)
     data.shuffle()
+    t_list = []
     for i in enumerate(range(10)):
+        t0 = time()
         users, pos, neg = data.sample_batch_labels()
-        pprint(users)
-        pprint(pos)
-        pprint(neg)
+        t1= time()
+        pprint(len(users))
+        t_list.append(t1 - t0)
+    print(np.mean(t_list))
     t1= time()
