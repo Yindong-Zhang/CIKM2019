@@ -7,7 +7,7 @@ Wang Xiang et al. Neural Graph Collaborative Filtering. In SIGIR 2019.
 '''
 import utility.metrics as metrics
 from utility.data_utils import *
-import multiprocessing
+from multiprocessing import Pool
 import heapq
 
 def get_auc(item_score, user_pos_test):
@@ -41,6 +41,11 @@ def ranklist_by_heapq(rating, test_items, test_relevancy_vec, Ks):
 
     r = [test_relevancy_vec[0, i] for i in K_max_item_inds]
     return r
+def arg_partial_sort(ratings, K):
+    nrows, ncols = ratings.shape
+    partial_inds = np.argpartition(ratings, ncols - K, axis=-1)[:, -K:]
+    partial_ratings = ratings[np.arange(nrows).reshape(-1, 1), partial_inds]
+    return partial_inds, partial_ratings
 
 def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, batch_test_flag=False):
     result = {'precision': 0,

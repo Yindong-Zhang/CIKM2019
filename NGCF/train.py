@@ -10,8 +10,8 @@ parser = argparse.ArgumentParser(description="Run NGCF.")
 parser.add_argument('--weights_path', default='../weights', help='Store model path.')
 parser.add_argument('--data_path', default='../Data/', help='Input data path.')
 parser.add_argument('--proj_path', default='../', help='Project path.')
-parser.add_argument('--dataset', default='CIKM-toy', help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
-parser.add_argument('--pretrain', type=int, default= 0,
+parser.add_argument('--dataset', default='CIKM', help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
+parser.add_argument('--pretrain', type=int, default= 1,
                     help='0: No pretrain, 1: Pretrain with the learned embeddings and stored models.')
 parser.add_argument('--epoch', type=int, default= 1, help='Number of epoch.')
 parser.add_argument('--layer_size', nargs='+', type= int, default=[64, ], help='Output sizes of every layer')
@@ -39,7 +39,7 @@ args = parser.parse_args()
 print(args)
 
 configStr  = "dataset~%s-layer_size~%s-reg~%s-lr~%s-mess_dropout~%s-user_dim~%s-user_attr_dim~%s-item_dim~%s-item_attr_dim~%s-embed_size~%s"\
-             %(args.dataset, args.layer_size, args.reg, args.lr, args.mess_dropout, args.user_dim, args.user_attr_dim, args.item_dim, args.item_attr_dim, args.embed_size)
+             %(args.dataset, '_'.join([str(s) for s in args.layer_size]), args.reg, args.lr, args.mess_dropout, args.user_dim, args.user_attr_dim, args.item_dim, args.item_attr_dim, args.embed_size)
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0,1'
 
@@ -78,11 +78,11 @@ def load_pretrained_data():
     return pretrain_data
 
 pretrain_data = None
-if args.pretrain == 1:
-    try:
-        pretrain_data = load_pretrained_data()
-    except Exception:
-        raise RuntimeError("pretrain embedding not found.")
+# if args.pretrain == 1:
+#     try:
+#         pretrain_data = load_pretrained_data()
+#     except Exception:
+#         raise RuntimeError("pretrain embedding not found.")
 
 adj_list = dataset.get_adj_mat()
 model = NGCF(adj_list, dataset.user_attr, dataset.item_attr, data_config=data_config, args= args, pretrain_data=pretrain_data)
@@ -92,7 +92,7 @@ model = NGCF(adj_list, dataset.user_attr, dataset.item_attr, data_config=data_co
 Save the model parameters.
 """
 weight_list = [model.weights[key] for key in model.weights if key not in ('user_embedding', 'item_embedding')]
-saver = tf.train.Saver(var_list= weight_list)
+saver = tf.train.Saver(var_list= list(model.weights.values()))
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
