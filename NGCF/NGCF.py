@@ -83,7 +83,7 @@ class NGCF(object):
 
         self.model_type += '_%s_%s_l%d' % (self.adj_type, self.alg_type, self.n_layers)
 
-        self.decay = args.regs
+        self.decay = args.reg
 
         self.n_relation = len(adj_list)
         self.A_fold = [self._split_A_hat(adj) for adj in adj_list]
@@ -166,43 +166,54 @@ class NGCF(object):
         initializer = tf.contrib.layers.xavier_initializer()
 
         if self.pretrain_data is None:
-            all_weights['age_embedding'] = tf.Variable(initializer([self.attr_size['age'], self.user_attr_dim]), name='age_embedding')
-            all_weights['career_embedding'] = tf.Variable(initializer([self.attr_size['career'], self.user_attr_dim]), name='career_embedding')
-            all_weights['gender_embedding'] = tf.Variable(initializer([self.attr_size['gender'], self.user_attr_dim]), name='gender_embedding')
-            all_weights['education_embedding'] = tf.Variable(initializer([self.attr_size['education'], self.user_attr_dim]), name='education_embedding')
-            all_weights['income_embedding'] = tf.Variable(initializer([self.attr_size['income'], self.user_attr_dim]), name='income_embedding')
-            all_weights['stage_weight'] = tf.Variable(initializer([self.attr_size['stage'], self.user_attr_dim]), name='stage_weight')
-            all_weights['user_embedding'] = tf.Variable(initializer([self.n_users, self.user_dim]), name= "user_bemdding")
+            all_weights['user_embedding'] = tf.Variable(initializer([self.n_users, self.user_dim]), name= "user_embedding")
 
-            all_weights['wu_embed'] = tf.Variable(initializer([self.user_dim_sum, self.embed_size]), name="user_embed_transform")
-            all_weights['bu_embed'] = tf.Variable(initializer([1, self.embed_size]), name='user_embed_bias')
-
-            all_weights['cate1_embedding'] = tf.Variable(initializer([self.attr_size['cate1'], self.item_attr_dim]), name='cate1_embedding')
-            all_weights['price_embedding'] = tf.Variable(initializer([self.attr_size['price'], self.item_attr_dim]), name='item_embedding')
             all_weights['item_embedding'] = tf.Variable(initializer([self.n_items, self.item_dim]), name='item_embedding')
 
-            all_weights['wi_embed'] = tf.Variable(initializer([self.item_dim_sum, self.embed_size]), name='item_embed_transform')
-            all_weights['bi_embed'] = tf.Variable(initializer([1, self.embed_size]), name ='bi_embedding')
-            print('using xavier initialization')
         else:
-            all_weights['user_embedding'] = tf.Variable(initial_value=self.pretrain_data['user_embed'], trainable=True,
-                                                        name='user_embedding', dtype=tf.float32)
-            all_weights['item_embedding'] = tf.Variable(initial_value=self.pretrain_data['item_embed'], trainable=True,
-                                                        name='item_embedding', dtype=tf.float32)
-            print('using pretrained initialization')
+
+            all_weights['user_embedding'] = tf.Variable(self.pretrain_data['user_embedding'], name= "user_embedding")
+
+            all_weights['item_embedding'] = tf.Variable(self.pretrain_data['item_embedding'], name='item_embedding')
+
+            print('using pretrained user-item embedding')
+
+        all_weights['age_embedding'] = tf.Variable(initializer([self.attr_size['age'], self.user_attr_dim]), name='age_embedding')
+        all_weights['career_embedding'] = tf.Variable(initializer([self.attr_size['career'], self.user_attr_dim]), name='career_embedding')
+        all_weights['gender_embedding'] = tf.Variable(initializer([self.attr_size['gender'], self.user_attr_dim]), name='gender_embedding')
+        all_weights['education_embedding'] = tf.Variable(initializer([self.attr_size['education'], self.user_attr_dim]),
+                                                         name='education_embedding')
+        all_weights['income_embedding'] = tf.Variable(initializer([self.attr_size['income'], self.user_attr_dim]),
+                                                      name='income_embedding')
+        all_weights['stage_weight'] = tf.Variable(initializer([self.attr_size['stage'], self.user_attr_dim]),
+                                                  name='stage_weight')
+
+        all_weights['wu_embed'] = tf.Variable(initializer([self.user_dim_sum, self.embed_size]), name="wu_embed")
+        all_weights['bu_embed'] = tf.Variable(initializer([1, self.embed_size]), name='bu_embed')
+
+        all_weights['cate1_embedding'] = tf.Variable(initializer([self.attr_size['cate1'], self.item_attr_dim]),
+                                                     name='cate1_embedding')
+        all_weights['price_embedding'] = tf.Variable(initializer([self.attr_size['price'], self.item_attr_dim]),
+                                                     name='price_embedding')
+
+        all_weights['wi_embed'] = tf.Variable(initializer([self.item_dim_sum, self.embed_size]), name='wi_embed')
+        all_weights['bi_embed'] = tf.Variable(initializer([1, self.embed_size]), name='bi_embedding')
+        print('using xavier initialization')
 
         self.weight_size_list = [self.embed_size] + self.weight_size
 
         for k in range(self.n_layers):
-            all_weights['W_gc_%d' %k] = [tf.Variable(
-                initializer([self.weight_size_list[k], self.weight_size_list[k+1]]), name='W_gc_%d_r%d' %(k, r)) for r in range(self.n_relation)]
-            all_weights['b_gc_%d' %k] = [tf.Variable(
-                initializer([1, self.weight_size_list[k+1]]), name='b_gc_%d_r%d' %(k, r)) for r in range(self.n_relation)]
+            for r in range(self.n_relation):
+                all_weights['W_gc_%d_%d' %(k, r)] = tf.Variable(initializer([self.weight_size_list[k], self.weight_size_list[k+1]]),
+                                                                name='W_gc_%d_%d' %(k, r))
+                all_weights['b_gc_%d_%d' %(k, r)] = tf.Variable(initializer([1, self.weight_size_list[k+1]]),
+                                                                name='b_gc_%d_%d' %(k, r))
 
-            all_weights['W_bi_%d' % k] = [tf.Variable(
-                initializer([self.weight_size_list[k], self.weight_size_list[k + 1]]), name='W_bi_%d_r%d' %(k, r)) for r in range(self.n_relation)]
-            all_weights['b_bi_%d' % k] = [tf.Variable(
-                initializer([1, self.weight_size_list[k + 1]]), name='b_bi_%d_r%d' %(k, r)) for r in range(self.n_relation)]
+                all_weights['W_bi_%d_%d' %(k, r)] = tf.Variable(initializer([self.weight_size_list[k], self.weight_size_list[k + 1]]),
+                                                                 name='W_bi_%d_%d' %(k, r))
+
+                all_weights['b_bi_%d_%d' %(k, r)] = tf.Variable(initializer([1, self.weight_size_list[k + 1]]),
+                                                                name='b_bi_%d_%d' %(k, r))
 
             # TODO:
             all_weights['W_mlp_%d' % k] = tf.Variable(
@@ -292,14 +303,14 @@ class NGCF(object):
                 side_embeddings.append(embeddings)
 
             # transformed sum messages of neighbors.
-            transformed_side_embedding = [tf.matmul(side_embeddings[r], self.weights['W_gc_%d' %(k, )][r]) + self.weights['b_gc_%d' %(k, )][r]
+            transformed_side_embedding = [tf.matmul(side_embeddings[r], self.weights['W_gc_%d_%d' %(k, r)]) + self.weights['b_gc_%d_%d' %(k, r)]
                                           for r in range(self.n_relation)]
             sum_embeddings = tf.nn.leaky_relu(tf.add_n(transformed_side_embedding))
 
             # bi messages of neighbors.
             bi_embeddings = [tf.multiply(ego_embeddings, side_embeddings[r]) for r in range(self.n_relation)]
             # transformed bi messages of neighbors.
-            transformed_bi_embedding = [tf.matmul(bi_embeddings[r], self.weights['W_bi_%d' %(k, )][r]) + self.weights['b_bi_%d' %(k, )][r] for r in range(self.n_relation)]
+            transformed_bi_embedding = [tf.matmul(bi_embeddings[r], self.weights['W_bi_%d_%d' %(k, r)]) + self.weights['b_bi_%d_%d' %(k, r)] for r in range(self.n_relation)]
             bi_embeddings = tf.nn.leaky_relu(tf.add_n(transformed_bi_embedding))
 
             # non-linear activation.

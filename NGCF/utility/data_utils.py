@@ -133,7 +133,7 @@ class Data(object):
                 sp.save_npz(os.path.join(self.path, '%s_mean_adj_mat.npz' %(btype, )), mean_adj_mat[btype])
 
 
-        print('already load adj matrix of buy, cart, collect, clk', adj_mat['by'].shape, time() - t1)
+        print('already load adj matrix of buy, cart, collect, clk in shape %s in %d seconds' %(adj_mat['by'].shape, time() - t1))
 
         if self.adj_type == 'plain':
             adj_list = [adj_mat[btype] for btype in self.btype_list]

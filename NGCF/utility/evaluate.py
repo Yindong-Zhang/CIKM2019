@@ -48,9 +48,9 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
               'ndcg': 0,
               'hit_ratio': 0}
 
-    item_num = dataset.num_sample_items
+    item_num = dataset.n_items
 
-    u_batch_size = batchsize
+    u_batch_size = 10000
     i_batch_size = batchsize
 
     n_test_users = len(test_users)
@@ -67,7 +67,7 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
     #     partition
         partial_inds = np.argpartition(ratings, item_num - K, axis= -1)[:, -K:]
         partial_ratings = ratings[np.arange(nrows).reshape(-1, 1), partial_inds]
-        partial_rel = dataset.test_adj_sum[users.reshape(-1, 1), partial_inds].toarray()
+        partial_rel = dataset.test_adj['sum'][users.reshape(-1, 1), partial_inds].toarray()
 
 
         inds = np.argsort(partial_ratings, axis= -1)
@@ -84,7 +84,8 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
                 'hit_ratio': hit_ratio.mean()
                 }
 
-    for it in range(n_user_batchs):
+    for it in range(2):
+        t1 = time()
         start = it * u_batch_size
         end = (it + 1) * u_batch_size
 
@@ -126,12 +127,16 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
                                                               model.pos_items: item_batch,
                                                               model.node_dropout: 0,
                                                               model.mess_dropout: 0})
-
+        t3 = time()
         tmp = evaluate_users(user_batch, rate_batch)
         for indicator in 'precision', 'recall', 'ndcg', 'hit_ratio':
             result[indicator] = (result[indicator] * it + tmp[indicator]) / (it + 1)
+        t2 = time()
+
+        print("%d / %d: precision %.5f recall: %.5f ndcg %.5f hit_ratio %.5f in %d / %d seconds"
+              %(it, n_user_batchs, tmp['precision'], tmp['recall'], tmp['ndcg'], tmp['hit_ratio'], t2 - t1, t2 - t3))
 
         count += len(user_batch)
 
-    assert count == n_test_users
+    # assert count == n_test_users
     return result
