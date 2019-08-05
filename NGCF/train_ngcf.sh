@@ -1,2 +1,2 @@
-python train.py --dataset CIKM --num_sample_users 500000 --num_sample_items 200000 --epoch 2 --layer_size 64 32 \
---batch_size 16384 --save_flag 1 --lr 0.01
+python train.py --dataset CIKM --epoch 4 --layer_size 64 32 \
+--batch_size 421504 --save_flag 1 --lr 0.01 --pretrain 1

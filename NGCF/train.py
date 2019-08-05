@@ -10,9 +10,9 @@ parser = argparse.ArgumentParser(description="Run NGCF.")
 parser.add_argument('--weights_path', default='../weights', help='Store model path.')
 parser.add_argument('--data_path', default='../Data/', help='Input data path.')
 parser.add_argument('--proj_path', default='../', help='Project path.')
-parser.add_argument('--dataset', default='CIKM', help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
+parser.add_argument('--dataset', default='CIKM-toy', help='Choose a dataset from {gowalla, yelp2018, amazon-book}')
 parser.add_argument('--pretrain', type=int, default= 1,
-                    help='0: No pretrain, 1: Pretrain with the learned embeddings and stored models.')
+                    help='0: No pretrain, -1: Pretrain with the learned embeddings, 1:Pretrain with stored models.')
 parser.add_argument('--epoch', type=int, default= 1, help='Number of epoch.')
 parser.add_argument('--layer_size', nargs='+', type= int, default=[64, ], help='Output sizes of every layer')
 parser.add_argument('--batch_size', type=int, default= 421504, help='Batch size.')
@@ -78,11 +78,11 @@ def load_pretrained_data():
     return pretrain_data
 
 pretrain_data = None
-# if args.pretrain == 1:
-#     try:
-#         pretrain_data = load_pretrained_data()
-#     except Exception:
-#         raise RuntimeError("pretrain embedding not found.")
+if args.pretrain == -1:
+    try:
+        pretrain_data = load_pretrained_data()
+    except Exception:
+        raise RuntimeError("pretrain embedding not found.")
 
 adj_list = dataset.get_adj_mat()
 model = NGCF(adj_list, dataset.user_attr, dataset.item_attr, data_config=data_config, args= args, pretrain_data=pretrain_data)

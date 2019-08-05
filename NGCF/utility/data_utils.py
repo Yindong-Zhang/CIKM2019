@@ -49,35 +49,97 @@ class Data(object):
         #get number of users and items
         self.weight = weight
 
-        self.adj = {}
+
         self.btype_list = ['by', 'clt', 'clk']
         self.pairs= (('by', 'clt'), ('by', 'clk'), ('by', None), ('clk', None), ('clt', 'clk'), ('clt', None))
-        self.adj['by'] = sp.load_npz(os.path.join(path, "buy_adj.npz"))
-        self.adj['clt'] = sp.load_npz(os.path.join(path, "clt_adj.npz"))
-        self.adj['clk'] = sp.load_npz(os.path.join(path, "clk_adj.npz"))
-        self.adj['sum'] = self.weight['by'] *  self.adj['by'] + self.weight['clt'] * self.adj['clt'] + self.weight['clk'] *  self.adj['clk']
 
-        self.train_adj = {}
-        self.test_adj = {}
-        for btype in self.btype_list:
-            self.train_adj[btype], self.test_adj[btype] = split_sparse_tensor(self.adj[btype], split_ratio=test_ratio)
+        try:
+            self.train_adj = {}
+            self.test_adj = {}
+            for btype in self.btype_list + ['sum', ]:
+                self.train_adj[btype] = sp.load_npz(os.path.join(path, "train_adj_%s.npz" %(btype, )))
+                self.test_adj[btype] = sp.load_npz(os.path.join(path, "test_adj_%s.npz" %(btype, )))
 
-        self.train_adj['sum'] = self.weight['by'] * self.train_adj['by'] + self.weight['clt'] * self.train_adj['clt'] + \
-                                self.weight['clk'] * self.train_adj['clk']
-        self.test_adj['sum'] = self.weight['by'] * self.test_adj['by'] + self.weight['clt'] * self.test_adj['clt'] + \
-                               self.weight['clk'] * self.test_adj['clk']
-        self.n_train = self.train_adj['sum'].getnnz()
-        self.n_test = self.test_adj['sum'].getnnz()
+            t = self.train_adj['sum']
+            s = t.dot(t.transpose())
+            self.n_train = self.train_adj['sum'].getnnz()
+            self.n_test = self.test_adj['sum'].getnnz()
 
-        self.n_users, self.n_items = self.adj['by'].shape[0], self.adj['by'].shape[1]
+            self.n_users, self.n_items = self.train_adj['sum'].shape[0], self.train_adj['sum'].shape[1]
 
-        self.train_items_count = {btype: np.array(self.train_adj[btype].sum(1)).reshape(-1, ).tolist() for btype in self.btype_list}
-        self.train_items_per_user = {btype: self.train_adj[btype].tolil().data.tolist() for btype in self.btype_list}
-        self.valid_users = np.arange(self.n_users)[np.array(self.train_adj['sum'].sum(1) > 0).reshape(-1, )]
+            self.train_items_count = {btype: np.array(self.train_adj[btype].sum(1)).reshape(-1, ).tolist() for btype in self.btype_list}
+            self.train_items_per_user = {btype: self.train_adj[btype].tolil().data.tolist() for btype in self.btype_list}
+            self.valid_users = np.arange(self.n_users)[np.array(self.train_adj['sum'].sum(1) > 0).reshape(-1, )]
 
-        is_int = self.test_adj['sum'] > 0
-        self.num_test_per_user = np.array(is_int.sum(1)).reshape(-1, )
-        self.test_users= np.arange(self.n_users)[self.num_test_per_user > 0]
+            test_int_count = (self.test_adj['sum'] > 0).sum(1)
+            self.num_test_per_user = np.array(test_int_count).reshape(-1, )
+            self.test_users= np.arange(self.n_users)[self.num_test_per_user > 0]
+
+            self.test_item_ids = np.load(os.path.join(path, "test_item_ids.npy"))
+            self.test_item_rel = np.load(os.path.join(path,  "test_item_rels.npy"))
+
+            self.num_test_items = self.test_item_ids.shape[1]
+
+        except Exception as e:
+            print(e)
+            self.adj = {}
+            self.adj['by'] = sp.load_npz(os.path.join(path, "buy_adj.npz"))
+            self.adj['clt'] = sp.load_npz(os.path.join(path, "clt_adj.npz"))
+            self.adj['clk'] = sp.load_npz(os.path.join(path, "clk_adj.npz"))
+            self.adj['sum'] = self.weight['by'] *  self.adj['by'] + self.weight['clt'] * self.adj['clt'] + self.weight['clk'] *  self.adj['clk']
+
+            self.train_adj = {}
+            self.test_adj = {}
+            for btype in self.btype_list:
+                self.train_adj[btype], self.test_adj[btype] = split_sparse_tensor(self.adj[btype], split_ratio=test_ratio)
+
+            self.train_adj['sum'] = self.weight['by'] * self.train_adj['by'] + self.weight['clt'] * self.train_adj['clt'] + \
+                                    self.weight['clk'] * self.train_adj['clk']
+            self.test_adj['sum'] = self.weight['by'] * self.test_adj['by'] + self.weight['clt'] * self.test_adj['clt'] + \
+                                   self.weight['clk'] * self.test_adj['clk']
+
+            for btype in self.btype_list + ['sum', ]:
+                sp.save_npz(os.path.join(path, "train_adj_%s.npz" %(btype, )), self.train_adj[btype])
+                sp.save_npz(os.path.join(path, "test_adj_%s.npz" %(btype, )), self.test_adj[btype])
+
+            self.n_train = self.train_adj['sum'].getnnz()
+            self.n_test = self.test_adj['sum'].getnnz()
+
+            self.n_users, self.n_items = self.adj['sum'].shape[0], self.adj['sum'].shape[1]
+
+            self.train_items_count = {btype: np.array(self.train_adj[btype].sum(1)).reshape(-1, ).tolist() for btype in self.btype_list}
+            self.train_items_per_user = {btype: self.train_adj[btype].tolil().data.tolist() for btype in self.btype_list}
+            self.valid_users = np.arange(self.n_users)[np.array(self.train_adj['sum'].sum(1) > 0).reshape(-1, )]
+
+            test_int_count = (self.test_adj['sum'] > 0).sum(1)
+            self.num_test_per_user = np.array(test_int_count).reshape(-1, )
+            self.test_users= np.arange(self.n_users)[self.num_test_per_user > 0]
+            """
+            ************************ 构造抽样测试物品矩阵 *****************
+            """
+            print(self.num_test_per_user.max(), self.num_test_per_user.min())
+            neg_pools = np.load(os.path.join(path, 'negative_items_pool.npy'))
+            assert self.num_test_per_user.max() - self.num_test_per_user.min() < 400, "NOT enought negative items pools."
+            self.num_test_items = self.num_test_per_user.min() + 400 # specific
+            self.test_item_ids = np.zeros((self.test_users.shape[0], self.num_test_items), dtype= np.int32)
+            self.test_item_rel = np.zeros((len(self.test_users), self.num_test_items))
+            for i, u in enumerate(self.test_users):
+                u_test_behavior = self.test_adj['sum'][u]
+                num_pos = u_test_behavior.getnnz()
+                self.test_item_ids[i, :num_pos] = u_test_behavior.nonzero()[1]
+                self.test_item_ids[i, num_pos:] = neg_pools[u][self.num_test_items - num_pos]
+
+                self.test_item_rel[i, :num_pos] = u_test_behavior.data
+                if i % 10000 == 0:
+                    print( " %d / %d test users processed." %(i, len(self.test_users)))
+
+            np.save(os.path.join(path, "test_item_ids.npy"), self.test_item_ids)
+            np.save(os.path.join(path, "test_item_rels.npy"), self.test_item_rel)
+
+            """
+            *********************************
+            """
+
         self.print_statistics()
 
         # attributes
@@ -108,7 +170,6 @@ class Data(object):
 
         for attr in self.item_attr_names:
             self.attr_size[attr] = int(np.max(self.item_attr[attr]) + 1)
-
 
     def get_adj_mat(self):
         adj_mat = {}

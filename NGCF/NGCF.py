@@ -97,9 +97,8 @@ class NGCF(object):
         self.pos_items = tf.placeholder(tf.int32, shape=(None,), name= "positve_items")
         self.neg_items = tf.placeholder(tf.int32, shape=(None,), name= "negative_items")
 
-        # self.users =  tf.placeholder(tf.int32, shape=(None,))
-        # self.pos_items = tf.placeholder(tf.int32, shape=(None,))
-        # self.neg_items = tf.placeholder(tf.int32, shape=(None,))
+        self.test_items = tf.placeholder(tf.int32, shape= (None, None), name= "test_items")
+
         # dropout: node dropout (adopted on the ego-networks);
         #          ... since the usage of node dropout have higher computational cost,
         #          ... please use the 'node_dropout_flag' to indicate whether use such technique.
@@ -139,15 +138,14 @@ class NGCF(object):
         self.pos_i_g_embeddings = tf.nn.embedding_lookup(self.ia_embeddings, self.pos_items)
         self.neg_i_g_embeddings = tf.nn.embedding_lookup(self.ia_embeddings, self.neg_items)
 
-        # self.u_g_embeddings = self.ua_embeddings[self.users]
-        # self.pos_i_g_embeddings = self.ia_embeddings[self.pos_items]
-        # self.neg_i_g_embeddings = self.ia_embeddings[self.neg_items]
-
         """
         *********************************************************
         Inference for the testing phase.
         """
-        self.rating = tf.matmul(self.u_g_embeddings, self.pos_i_g_embeddings, transpose_a=False, transpose_b=True)
+        test_item_embeddings = tf.nn.embedding_lookup(self.ia_embeddings, self.test_items)
+
+        tmp = tf.multiply(tf.expand_dims(self.u_g_embeddings, 1), test_item_embeddings)
+        self.rating = tf.reduce_sum(tmp, -1)
 
         """
         *********************************************************

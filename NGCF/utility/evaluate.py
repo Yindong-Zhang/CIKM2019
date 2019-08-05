@@ -7,7 +7,6 @@ Wang Xiang et al. Neural Graph Collaborative Filtering. In SIGIR 2019.
 '''
 import utility.metrics as metrics
 from utility.data_utils import *
-from multiprocessing import Pool
 import heapq
 
 def get_auc(item_score, user_pos_test):
@@ -41,11 +40,6 @@ def ranklist_by_heapq(rating, test_items, test_relevancy_vec, Ks):
 
     r = [test_relevancy_vec[0, i] for i in K_max_item_inds]
     return r
-def arg_partial_sort(ratings, K):
-    nrows, ncols = ratings.shape
-    partial_inds = np.argpartition(ratings, ncols - K, axis=-1)[:, -K:]
-    partial_ratings = ratings[np.arange(nrows).reshape(-1, 1), partial_inds]
-    return partial_inds, partial_ratings
 
 def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, batch_test_flag=False):
     result = {'precision': 0,
@@ -59,25 +53,20 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
     i_batch_size = batchsize
 
     n_test_users = len(test_users)
-    n_user_batchs = n_test_users // u_batch_size + 1
+    n_test_batch = int(np.ceil(n_test_users / u_batch_size))
 
     count = 0
-
-    def evaluate_users(users, ratings):
+    def evaluate_users(ratings, rel, num_pos):
         # exclude trainin
-        nrows = len(users)
-        train_item_rows, train_item_cols = dataset.train_adj['sum'][users].nonzero()
-        ratings[train_item_rows, train_item_cols] = 0
-
-    #     partition
-        partial_inds = np.argpartition(ratings, item_num - K, axis= -1)[:, -K:]
-        partial_ratings = ratings[np.arange(nrows).reshape(-1, 1), partial_inds]
-        partial_rel = dataset.test_adj['sum'][users.reshape(-1, 1), partial_inds].toarray()
+        nrows = len(ratings)
+        # partial_inds = np.argpartition(ratings, -K, axis=-1)[:, -K:]
+        # partial_ratings = ratings[np.arange(nrows).reshape(-1, 1), partial_inds]
+        # partial_rel = dataset.test_item_rel[np.arange(nrows).reshape(-1, 1), partial_inds]
 
 
-        inds = np.argsort(partial_ratings, axis= -1)
-        r = partial_rel[np.arange(nrows).reshape(-1, 1), inds]
-        num_pos = dataset.num_test_per_user[users]
+        inds = np.argsort(ratings, axis= -1)[:, -K:]
+        r = rel[np.arange(nrows).reshape(-1, 1), inds]
+
 
         precision = metrics.precision_at_k(r, K)
         recall = metrics.recall_at_k(r, K, num_pos)
@@ -89,57 +78,34 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
                 'hit_ratio': hit_ratio.mean()
                 }
 
-    for it in range(2):
+    for it in range(n_test_batch):
         t1 = time()
         start = it * u_batch_size
-        end = (it + 1) * u_batch_size
+        end = min((it + 1) * u_batch_size, n_test_users)
 
         user_batch = test_users[start: end]
 
-        if batch_test_flag:
+        item_batch = dataset.test_item_ids[start:end]
 
-            n_item_batchs = item_num // i_batch_size + 1
-            rate_batch = np.zeros(shape=(len(user_batch), item_num))
-
-            i_count = 0
-            for i_batch_id in range(n_item_batchs):
-                i_start = i_batch_id * i_batch_size
-                i_end = min((i_batch_id + 1) * i_batch_size, item_num)
-
-                item_batch = range(i_start, i_end)
-
-                if drop_flag == False:
-                    i_rate_batch = sess.run(model.rating, {model.users: user_batch,
-                                                                model.pos_items: item_batch})
-                else:
-                    i_rate_batch = sess.run(model.rating, {model.users: user_batch,
-                                                                model.pos_items: item_batch,
-                                                                model.node_dropout: 0.,
-                                                                model.mess_dropout: 0.})
-                rate_batch[:, i_start: i_end] = i_rate_batch
-                i_count += i_rate_batch.shape[1]
-
-            assert i_count == item_num
-
+        if drop_flag == False:
+            rate_batch = sess.run(model.rating, {model.users: user_batch,
+                                                          model.test_items: item_batch})
         else:
-            item_batch = range(item_num)
-
-            if drop_flag == False:
-                rate_batch = sess.run(model.rating, {model.users: user_batch,
-                                                              model.pos_items: item_batch})
-            else:
-                rate_batch = sess.run(model.rating, {model.users: user_batch,
-                                                              model.pos_items: item_batch,
-                                                              model.node_dropout: 0,
-                                                              model.mess_dropout: 0})
+            rate_batch = sess.run(model.rating, {model.users: user_batch,
+                                                          model.test_items: item_batch,
+                                                          model.node_dropout: 0,
+                                                          model.mess_dropout: 0})
         t3 = time()
-        tmp = evaluate_users(user_batch, rate_batch)
+        num_pos = dataset.num_test_per_user[user_batch]
+        rel = dataset.test_item_rel[start:end]
+        tmp = evaluate_users(rate_batch, rel, num_pos)
+
         for indicator in 'precision', 'recall', 'ndcg', 'hit_ratio':
             result[indicator] = (result[indicator] * it + tmp[indicator]) / (it + 1)
         t2 = time()
 
         print("%d / %d: precision %.5f recall: %.5f ndcg %.5f hit_ratio %.5f in %d / %d seconds"
-              %(it, n_user_batchs, tmp['precision'], tmp['recall'], tmp['ndcg'], tmp['hit_ratio'], t2 - t1, t2 - t3))
+              %(it, n_test_batch, tmp['precision'], tmp['recall'], tmp['ndcg'], tmp['hit_ratio'], t2 - t1, t2 - t3))
 
         count += len(user_batch)
 
