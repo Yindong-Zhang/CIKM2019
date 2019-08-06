@@ -60,8 +60,6 @@ class Data(object):
                 self.train_adj[btype] = sp.load_npz(os.path.join(path, "train_adj_%s.npz" %(btype, )))
                 self.test_adj[btype] = sp.load_npz(os.path.join(path, "test_adj_%s.npz" %(btype, )))
 
-            t = self.train_adj['sum']
-            s = t.dot(t.transpose())
             self.n_train = self.train_adj['sum'].getnnz()
             self.n_test = self.test_adj['sum'].getnnz()
 
@@ -77,11 +75,11 @@ class Data(object):
 
             self.test_item_ids = np.load(os.path.join(path, "test_item_ids.npy"))
             self.test_item_rel = np.load(os.path.join(path,  "test_item_rels.npy"))
-
+            assert len(self.test_users) == len(self.test_item_ids) == len(self.test_item_rel), "Incompatible shape."
             self.num_test_items = self.test_item_ids.shape[1]
 
-        except Exception as e:
-            print(e)
+        except FileNotFoundError as e:
+            print(e, "try create negative sampling from scratch.")
             self.adj = {}
             self.adj['by'] = sp.load_npz(os.path.join(path, "buy_adj.npz"))
             self.adj['clt'] = sp.load_npz(os.path.join(path, "clt_adj.npz"))
@@ -121,7 +119,7 @@ class Data(object):
             neg_pools = np.load(os.path.join(path, 'negative_items_pool.npy'))
             assert self.num_test_per_user.max() - self.num_test_per_user.min() < 400, "NOT enought negative items pools."
             self.num_test_items = self.num_test_per_user.min() + 400 # specific
-            self.test_item_ids = np.zeros((self.test_users.shape[0], self.num_test_items), dtype= np.int32)
+            self.test_item_ids = np.zeros((len(self.test_users), self.num_test_items), dtype= np.int32)
             self.test_item_rel = np.zeros((len(self.test_users), self.num_test_items))
             for i, u in enumerate(self.test_users):
                 u_test_behavior = self.test_adj['sum'][u]

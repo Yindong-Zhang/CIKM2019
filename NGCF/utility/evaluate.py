@@ -47,10 +47,7 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
               'ndcg': 0,
               'hit_ratio': 0}
 
-    item_num = dataset.n_items
-
     u_batch_size = 10000
-    i_batch_size = batchsize
 
     n_test_users = len(test_users)
     n_test_batch = int(np.ceil(n_test_users / u_batch_size))
@@ -59,10 +56,6 @@ def evaluate(sess, model, test_users, dataset, batchsize, K, drop_flag=False, ba
     def evaluate_users(ratings, rel, num_pos):
         # exclude trainin
         nrows = len(ratings)
-        # partial_inds = np.argpartition(ratings, -K, axis=-1)[:, -K:]
-        # partial_ratings = ratings[np.arange(nrows).reshape(-1, 1), partial_inds]
-        # partial_rel = dataset.test_item_rel[np.arange(nrows).reshape(-1, 1), partial_inds]
-
 
         inds = np.argsort(ratings, axis= -1)[:, -K:]
         r = rel[np.arange(nrows).reshape(-1, 1), inds]
