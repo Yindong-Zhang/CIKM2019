@@ -144,7 +144,7 @@ for epoch in range(args.epoch):
     n_batch = dataset.n_train // args.batch_size + 1 # my choice
 
     print("Start training...")
-    for it in range(1):
+    for it in range(n_batch):
         users, pos_items, neg_items = dataset.sample_batch_labels()
         _, batch_loss, batch_mf_loss, batch_emb_loss, batch_reg_loss = sess.run(
             [model.opt, model.loss, model.mf_loss, model.emb_loss, model.reg_loss],
